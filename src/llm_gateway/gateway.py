@@ -84,6 +84,7 @@ class LLMGateway:
         # Non-adaptive mode uses a plain semaphore + rate limiter
         self._semaphore: asyncio.Semaphore | None = None
         self._limiter: AdaptiveRateLimiter | None = None
+        self._warmup_task: asyncio.Task | None = None
 
     async def __aenter__(self) -> "LLMGateway":
         max_conn, keepalive, _capped = resolve_httpx_connection_limits(
@@ -132,7 +133,17 @@ class LLMGateway:
             )
         else:
             self._semaphore = asyncio.Semaphore(self._config.concurrency)
-            self._limiter = AdaptiveRateLimiter(target_rps=self._config.rps_limit)
+            # Start at 1 rps if warmup enabled; ramp to target in background
+            warmup = self._config.rps_warmup
+            start_rps = 1.0 if warmup > 0 else self._config.rps_limit
+            self._limiter = AdaptiveRateLimiter(target_rps=start_rps)
+            if warmup > 0:
+                self._warmup_task = asyncio.create_task(
+                    self._rps_warmup_loop(
+                        target_rps=self._config.rps_limit,
+                        warmup_seconds=warmup,
+                    )
+                )
 
         if self._config.fatal_abort_enabled:
             self._fatal_monitor = FatalFailureMonitor(
@@ -156,6 +167,13 @@ class LLMGateway:
         return self
 
     async def __aexit__(self, *exc) -> None:
+        if self._warmup_task is not None:
+            self._warmup_task.cancel()
+            try:
+                await self._warmup_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._warmup_task = None
         if self._recovery_task is not None:
             self._recovery_task.cancel()
             try:
@@ -166,6 +184,20 @@ class LLMGateway:
         if self._http_client is not None:
             await self._http_client.__aexit__(None, None, None)
             self._http_client = None
+
+    async def _rps_warmup_loop(self, target_rps: float, warmup_seconds: float) -> None:
+        """Linearly ramp rate limiter from 1 rps to target over warmup_seconds."""
+        start_rps = 1.0
+        steps = max(int(warmup_seconds * 2), 1)  # ~0.5s per step
+        interval = warmup_seconds / steps
+        rps_step = (target_rps - start_rps) / steps
+
+        for i in range(1, steps + 1):
+            await asyncio.sleep(interval)
+            current = min(start_rps + rps_step * i, target_rps)
+            self._limiter.set_target_rps(current)
+        # Final: ensure we land exactly at target
+        self._limiter.set_target_rps(target_rps)
 
     async def call(
         self,

@@ -159,6 +159,7 @@ async def test_non_adaptive_mode(monkeypatch):
         enable_adaptive_runtime=False,
         concurrency=2,
         rps_limit=1000.0,
+        rps_warmup=0.0,  # disable warmup for basic test
         request_timeout=5,
         transport_stuck_seconds=0,
     )
@@ -171,6 +172,31 @@ async def test_non_adaptive_mode(monkeypatch):
         text, usage = await gw.call([{"role": "user", "content": "hi"}], "gpt-4o-mini")
     assert text == "hey"
     assert usage["status_code"] == 200
+
+
+async def test_non_adaptive_warmup_ramps_rps(monkeypatch):
+    """Non-adaptive mode with warmup starts at 1 rps and ramps to target."""
+    config = GatewayConfig(
+        litellm_base="http://test:9999/v1",
+        litellm_key="test",
+        enable_adaptive_runtime=False,
+        concurrency=10,
+        rps_limit=100.0,
+        rps_warmup=1.0,  # 1 second warmup
+        request_timeout=5,
+        transport_stuck_seconds=0,
+    )
+    monkeypatch.setattr(
+        "llm_gateway.gateway.httpx.AsyncClient",
+        _mock_client_factory(_ok_response("ok")),
+    )
+    async with LLMGateway(config) as gw:
+        # Immediately after init, limiter should be at low rps (started at 1.0)
+        assert gw._limiter.target_rps < 50.0
+        # Wait for warmup to complete
+        await asyncio.sleep(1.5)
+        # After warmup, should be at target
+        assert gw._limiter.target_rps == 100.0
 
 
 async def test_exception_from_transport_does_not_propagate(gateway_config, monkeypatch):
