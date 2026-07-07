@@ -2,17 +2,22 @@
 
 Requires a running LiteLLM proxy. Skipped unless MODULE0_INTEGRATION=1.
 
-    export MODULE0_INTEGRATION=1
-    export LITELLM_BASE=http://localhost:4000/v1
-    export LITELLM_KEY=sk-...
-    export MODULE0_TEST_MODEL=gpt-4o-mini
-    pytest tests/module0/test_integration.py -v
+Setup:
+    1. Fill in .env at project root:
+         MODULE0_INTEGRATION=1
+         LITELLM_BASE=http://localhost:4000/v1
+         LITELLM_KEY=sk-...
+         MODULE0_TEST_MODEL=gpt-4o-mini
+    2. pytest tests/module0/test_integration.py -v
 """
 
 import os
 import pathlib
 
 import pytest
+
+from dotenv import load_dotenv
+load_dotenv(pathlib.Path(__file__).parent.parent.parent / ".env")
 
 from llm_gateway import LLMGateway, GatewayConfig
 from module0 import QueryCompiler, Taxonomy

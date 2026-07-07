@@ -1,9 +1,8 @@
 """Manual smoke test: Module 0 → LLMGateway → LiteLLM.
 
 Usage:
-    export LITELLM_BASE=http://localhost:4000/v1
-    export LITELLM_KEY=sk-...
-    python scripts/module0_smoke.py "写入py文件有语法错误，工具调用结构经常出错"
+    1. Fill in .env at project root (LITELLM_BASE, LITELLM_KEY, MODULE0_TEST_MODEL)
+    2. python scripts/module0_smoke.py "写入py文件有语法错误，工具调用结构经常出错"
 """
 
 import asyncio
@@ -11,6 +10,9 @@ import json
 import os
 import sys
 import pathlib
+
+from dotenv import load_dotenv
+load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
 
 from llm_gateway import LLMGateway, GatewayConfig
 from module0 import QueryCompiler, Taxonomy
