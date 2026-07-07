@@ -1,0 +1,34 @@
+{
+  "raw_input": "写入py文件有语法错误，并且工具调用结构经常出错",
+  "domain": "agentic_swe",
+  "sub_problems": [
+    {
+      "id": "p1",
+      "origin": "original",
+      "parent_id": null,
+      "raw_text": "写入py文件有语法错误",
+      "failure_summary": "写入 py 文件时产生语法错误",
+      "target_capability": ["valid_syntax_in_toolcall"],
+      "trajectory_signal": "observation 含 SyntaxError 且前序 tool_call 含 python 代码写入",
+      "hyde_positive": ["假设: 工具正确写入 python 文件，无语法错误，执行结果 exit code 0", "假设: python 文件包含合法 import 和函数定义，lint 通过"],
+      "keywords": ["SyntaxError", "python", "import"],
+      "structured_filters": {"languages": ["python"], "tools_used": ["Write", "Edit"], "outcome_transition": ["failed→success"], "min_turns": null, "has_verification_step": null},
+      "confidence": 0.92,
+      "route": "pass"
+    },
+    {
+      "id": "p2",
+      "origin": "original",
+      "parent_id": null,
+      "raw_text": "工具调用结构经常出错",
+      "failure_summary": "tool_call JSON 结构畸形或错位到 thinking 块",
+      "target_capability": ["wellformed_tool_call"],
+      "trajectory_signal": "tool_call 块 JSON 解析失败或 tool_call 内容出现在 thinking/content 字段",
+      "hyde_positive": ["假设: tool_call 正确使用 JSON 格式，包含 name + arguments 字段", "假设: thinking 块不包含 tool_call 内容，工具调用独立且结构清晰"],
+      "keywords": ["tool_call", "JSON", "malformed", "thinking"],
+      "structured_filters": {"languages": null, "tools_used": null, "outcome_transition": ["failed→success"], "min_turns": null, "has_verification_step": null},
+      "confidence": 0.88,
+      "route": "pass"
+    }
+  ]
+}
