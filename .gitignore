@@ -1,0 +1,19 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+.venv/
+venv/
+.env
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+uv.lock
+.DS_Store
+.claude/
+
+# Large binary tool (re-downloadable from plantuml.com)
+plantuml.jar

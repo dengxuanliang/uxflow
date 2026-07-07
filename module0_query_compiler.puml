@@ -1,0 +1,71 @@
+@startuml module0
+title 模块 0：问题清单编译（Query Compiler）— 第一版
+
+skinparam backgroundColor #FEFEFE
+skinparam defaultFontName "PingFang SC"
+skinparam activity {
+  BackgroundColor #E8F0FE
+  BorderColor #4285F4
+  FontColor #202124
+  DiamondBackgroundColor #FEF7E0
+  DiamondBorderColor #F9AB00
+}
+skinparam note {
+  BackgroundColor #F1F3F4
+  BorderColor #9AA0A6
+}
+
+start
+
+:用户问题清单（自然语言）;
+note right
+  例: "解题过程中途停止，
+  工具调用 import 中 python 代码非法，
+  bash command 中 python 代码闭合有问题"
+end note
+
+partition "Call 1 — LLM 调用 #1" {
+  :Part 1 子问题分解;
+  note right
+    按逗号/分号/语义转折切分
+    合并重复，每条单一失败模式
+    产出: id, raw_text, failure_summary
+  end note
+}
+
+:N 条子问题（batch）;
+
+partition "Call 2 — LLM 调用 #2（批量 + 置信度自评）" {
+  fork
+    :Part 2 能力标签映射\n(target_capability);
+  fork again
+    :Part 3 轨迹自报信号\n(trajectory_signal);
+  fork again
+    :Part 4 HyDE 正例生成\n(hyde_positive × 2-3);
+  fork again
+    :Part 5 关键词 + 结构化过滤\n(keywords, structured_filters);
+  fork again
+    :Part 6 置信度自评\n(confidence);
+  end fork
+}
+
+if (confidence >= 0.8 ?) then (pass)
+  :加入 Problem Spec;
+else (drop, < 0.8)
+  :筛除该子问题;
+  stop
+endif
+
+:输出 Problem Spec\n（仅含 pass 的子问题）;
+note right
+  每条子问题携带:
+  target_capability / trajectory_signal
+  hyde_positive / keywords
+  structured_filters / confidence
+end note
+
+:交付下游召回模块（模块 1→2）;
+
+stop
+
+@enduml
