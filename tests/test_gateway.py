@@ -171,3 +171,51 @@ async def test_non_adaptive_mode(monkeypatch):
         text, usage = await gw.call([{"role": "user", "content": "hi"}], "gpt-4o-mini")
     assert text == "hey"
     assert usage["status_code"] == 200
+
+
+async def test_exception_from_transport_does_not_propagate(gateway_config, monkeypatch):
+    """When transport raises unexpectedly, gateway.call returns (None, usage)
+    instead of letting the exception escape — and the permit is released."""
+
+    def handler(request):
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr(
+        "llm_gateway.gateway.httpx.AsyncClient",
+        _mock_client_factory(handler),
+    )
+    async with LLMGateway(gateway_config) as gw:
+        content, usage = await gw.call(
+            [{"role": "user", "content": "hi"}], "gpt-4o-mini",
+        )
+        # No exception propagated; error captured in usage
+        assert content is None
+        assert "error" in usage
+        # Permit was released — the gate is not stuck (a follow-up call works)
+        content2, _ = await gw.call(
+            [{"role": "user", "content": "again"}], "gpt-4o-mini",
+        )
+        assert content2 is None
+
+
+async def test_exception_feeds_circuit_breaker(gateway_config, monkeypatch):
+    """Repeated transport exceptions feed the circuit breaker window (no blind spot).
+
+    ConnectError → TRANSIENT_ERROR, which is observed in the window but does not
+    by itself trigger degradation (only timeout/overload/abnormal do). Verify the
+    window received the observations.
+    """
+
+    def handler(request):
+        raise httpx.ConnectError("refused")
+
+    monkeypatch.setattr(
+        "llm_gateway.gateway.httpx.AsyncClient",
+        _mock_client_factory(handler),
+    )
+    async with LLMGateway(gateway_config) as gw:
+        for _ in range(4):
+            await gw.call([{"role": "user", "content": "hi"}], "gpt-4o-mini")
+        # The breaker's sliding window should have observations
+        snap = gw.runtime_snapshot
+        assert snap["window_size"] == 4

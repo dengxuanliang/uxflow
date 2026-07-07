@@ -11,7 +11,12 @@ import asyncio
 import httpx
 
 from llm_gateway.config import GatewayConfig, resolve_httpx_connection_limits
-from llm_gateway.outcomes import OutcomeClass, RequestOutcome, classify_http_result
+from llm_gateway.outcomes import (
+    OutcomeClass,
+    RequestOutcome,
+    classify_exception,
+    classify_http_result,
+)
 from llm_gateway.recovery import SwappableAsyncClient, transport_recovery_loop
 from llm_gateway.runtime import (
     AdaptiveLLMRuntime,
@@ -43,6 +48,21 @@ def _outcome_from_usage(usage: dict) -> RequestOutcome:
     if "timeout" in err.lower():
         return RequestOutcome(OutcomeClass.TIMEOUT, error=err)
     return RequestOutcome(OutcomeClass.TRANSIENT_ERROR, error=err)
+
+
+def _usage_from_exception(exc: Exception) -> tuple[None, dict, RequestOutcome]:
+    """Build (content, usage_dict, outcome) for an exception that escaped transport.
+
+    This ensures the circuit breaker/stats/fatal monitor always get feedback,
+    even when async_llm_call raises rather than returning a usage dict.
+    """
+    outcome = classify_exception(exc)
+    usage = {
+        "error": outcome.error,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+    }
+    return None, usage, outcome
 
 
 class LLMGateway:
@@ -169,6 +189,10 @@ class LLMGateway:
         )
 
         # Step 2: Admission + Transport
+        # If the transport raises an unexpected exception (e.g. an httpx
+        # connection error that escapes async_llm_call's own handling), we
+        # still classify it, feed the circuit breaker, and record stats
+        # before returning — never let the breaker go blind on a failure.
         if self._runtime is not None:
             # Adaptive mode: runtime.acquire() handles gate + rate limiter
             permit = await self._runtime.acquire()
@@ -182,24 +206,29 @@ class LLMGateway:
                     config=self._config,
                     adaptive_mode=True,
                 )
+                outcome = _outcome_from_usage(usage)
+            except Exception as exc:
+                content, usage, outcome = _usage_from_exception(exc)
             finally:
                 permit.release()
-            outcome = _outcome_from_usage(usage)
             self._runtime.observe(outcome)
         else:
             # Non-adaptive mode: plain semaphore + rate limiter
             await self._limiter.acquire()
             async with self._semaphore:
-                content, usage = await async_llm_call(
-                    self._http_client,
-                    truncated,
-                    model,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    config=self._config,
-                    adaptive_mode=False,
-                )
-            outcome = _outcome_from_usage(usage)
+                try:
+                    content, usage = await async_llm_call(
+                        self._http_client,
+                        truncated,
+                        model,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        config=self._config,
+                        adaptive_mode=False,
+                    )
+                    outcome = _outcome_from_usage(usage)
+                except Exception as exc:
+                    content, usage, outcome = _usage_from_exception(exc)
 
         # Step 3: Stats recording
         status = usage.get("status_code")
