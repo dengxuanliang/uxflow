@@ -81,6 +81,12 @@ def test_classify_timeout_exception():
     assert o.classification is OutcomeClass.TIMEOUT
 
 
+def test_classify_httpx_timeout():
+    import httpx
+    o = classify_exception(httpx.ReadTimeout("slow"))
+    assert o.classification is OutcomeClass.TIMEOUT
+
+
 def test_classify_generic_exception():
     o = classify_exception(ValueError("boom"))
     assert o.classification is OutcomeClass.TRANSIENT_ERROR

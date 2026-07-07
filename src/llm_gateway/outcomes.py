@@ -16,6 +16,8 @@ import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
 
+import httpx
+
 __all__ = [
     "OutcomeClass",
     "RequestOutcome",
@@ -50,6 +52,7 @@ class RequestOutcome:
 
     @property
     def is_retryable(self) -> bool:
+        # 故意与 is_infra_failure 保持独立集合：语义不同，未来可能分化
         return self.classification in {
             OutcomeClass.TIMEOUT,
             OutcomeClass.OVERLOAD,
@@ -60,6 +63,7 @@ class RequestOutcome:
 
     @property
     def is_infra_failure(self) -> bool:
+        # 故意与 is_retryable 保持独立集合：语义不同，未来可能分化
         return self.classification in {
             OutcomeClass.TIMEOUT,
             OutcomeClass.OVERLOAD,
@@ -106,38 +110,41 @@ def classify_http_result(
     content_filtered: bool = False,
     latency_ms: float | None = None,
 ) -> RequestOutcome:
+    def _make(cls: OutcomeClass) -> RequestOutcome:
+        return RequestOutcome(cls, status_code, error_text, latency_ms)
+
     if 200 <= status_code < 300:
         if parse_error:
-            return RequestOutcome(OutcomeClass.ABNORMAL_RESPONSE, status_code, error_text, latency_ms)
-        return RequestOutcome(OutcomeClass.SUCCESS, status_code, latency_ms=latency_ms)
+            return _make(OutcomeClass.ABNORMAL_RESPONSE)
+        return _make(OutcomeClass.SUCCESS)
 
     if status_code in (401, 402):
-        return RequestOutcome(OutcomeClass.AUTH_ERROR, status_code, error_text, latency_ms)
+        return _make(OutcomeClass.AUTH_ERROR)
 
     if status_code == 429:
-        return RequestOutcome(OutcomeClass.OVERLOAD, status_code, error_text, latency_ms)
+        return _make(OutcomeClass.OVERLOAD)
 
     if status_code in (500, 502, 503, 504):
-        return RequestOutcome(OutcomeClass.SERVER_ERROR, status_code, error_text, latency_ms)
+        return _make(OutcomeClass.SERVER_ERROR)
 
     if status_code == 400:
         if content_filtered or _contains_any(error_text, _CONTENT_FILTER_KEYWORDS):
-            return RequestOutcome(OutcomeClass.CONTENT_FILTERED, status_code, error_text, latency_ms)
+            return _make(OutcomeClass.CONTENT_FILTERED)
         if _contains_any(error_text, _INPUT_ERROR_KEYWORDS):
-            return RequestOutcome(OutcomeClass.INPUT_ERROR, status_code, error_text, latency_ms)
-        return RequestOutcome(OutcomeClass.TRANSIENT_ERROR, status_code, error_text, latency_ms)
+            return _make(OutcomeClass.INPUT_ERROR)
+        return _make(OutcomeClass.TRANSIENT_ERROR)
 
     if status_code == 403:
-        return RequestOutcome(OutcomeClass.TRANSIENT_ERROR, status_code, error_text, latency_ms)
+        return _make(OutcomeClass.TRANSIENT_ERROR)
 
     if 400 <= status_code < 500:
-        return RequestOutcome(OutcomeClass.INPUT_ERROR, status_code, error_text, latency_ms)
+        return _make(OutcomeClass.INPUT_ERROR)
 
-    return RequestOutcome(OutcomeClass.TRANSIENT_ERROR, status_code, error_text, latency_ms)
+    return _make(OutcomeClass.TRANSIENT_ERROR)
 
 
 def classify_exception(exc: Exception, *, latency_ms: float | None = None) -> RequestOutcome:
     message = f"{type(exc).__name__}: {exc}"
-    if isinstance(exc, asyncio.TimeoutError):
+    if isinstance(exc, (asyncio.TimeoutError, httpx.TimeoutException)):
         return RequestOutcome(OutcomeClass.TIMEOUT, error=message, latency_ms=latency_ms)
     return RequestOutcome(OutcomeClass.TRANSIENT_ERROR, error=message, latency_ms=latency_ms)
