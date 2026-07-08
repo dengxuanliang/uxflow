@@ -1,0 +1,173 @@
+"""Top-level pipeline orchestration.
+
+Flow: load trajectories → slice → extract signatures → build index →
+for each ProblemSpec sub_problem: recall → judge → collect SFTCandidates.
+"""
+
+from __future__ import annotations
+
+import pathlib
+from dataclasses import dataclass, field
+
+from module1.models import SFTCandidate, Slice, TrajectorySignature
+from module1.loader import load_trajectories
+from module1.slicer import slice_trajectory
+from module1.signature import extract_signature
+from module1.index import MemoryIndex
+from module1.judge import Judge
+
+__all__ = ["TrajectoryPipeline", "PipelineConfig"]
+
+
+@dataclass
+class PipelineConfig:
+    """Configuration for the trajectory pipeline."""
+    judge_model: str = "gpt-4o-mini"
+    judge_batch_size: int = 3
+    recall_top_n: int = 20
+    min_confidence: float = 0.7
+    embedding_model: object | None = None  # Optional EmbeddingModel instance
+
+
+class TrajectoryPipeline:
+    """Full trajectory processing pipeline.
+
+    Usage::
+
+        pipeline = TrajectoryPipeline(config=cfg, gateway=gw)
+        candidates = await pipeline.run(trajectory_paths=..., problem_specs=...)
+    """
+
+    def __init__(self, config: PipelineConfig, gateway):
+        self._config = config
+        self._gateway = gateway
+        self._index = MemoryIndex()
+        self._judge = Judge(
+            gateway=gateway,
+            model=config.judge_model,
+            batch_size=config.judge_batch_size,
+        )
+        # Mapping: (trajectory_id, slice_index) → Slice object
+        self._slice_map: dict[tuple[str, int], Slice] = {}
+        # Mapping: trajectory_id → source file path
+        self._traj_paths: dict[str, str] = {}
+
+    async def run(
+        self,
+        *,
+        trajectory_paths: list[str | pathlib.Path],
+        problem_specs: list[dict],
+    ) -> list[SFTCandidate]:
+        """Execute the full pipeline.
+
+        Args:
+            trajectory_paths: paths to JSONL trajectory files.
+            problem_specs: list of ProblemSpec dicts (contract §1 format).
+
+        Returns:
+            List of SFTCandidate objects.
+        """
+        # Phase 1: Load + Slice + Sign + Index
+        self._build_index(trajectory_paths)
+
+        if self._index.size == 0:
+            return []
+
+        # Phase 2: For each sub_problem in each spec: recall + judge
+        all_candidates: dict[str, SFTCandidate] = {}  # keyed by trajectory_id
+
+        for spec in problem_specs:
+            spec_id = spec.get("raw_input", "unknown")[:50]
+            sub_problems = spec.get("sub_problems", [])
+
+            for sp in sub_problems:
+                candidates = await self._process_sub_problem(sp, spec_id)
+                for c in candidates:
+                    # Merge into existing candidate or create new
+                    if c.trajectory_id in all_candidates:
+                        all_candidates[c.trajectory_id].matched_problems.extend(
+                            c.matched_problems
+                        )
+                    else:
+                        all_candidates[c.trajectory_id] = c
+
+        return list(all_candidates.values())
+
+    def _build_index(self, trajectory_paths: list[str | pathlib.Path]) -> None:
+        """Load trajectories, slice, extract signatures, build index."""
+        for path in trajectory_paths:
+            path = pathlib.Path(path)
+            trajectories = load_trajectories(path)
+
+            for traj in trajectories:
+                self._traj_paths[traj.id] = str(path)
+                slices = slice_trajectory(traj)
+
+                for sl in slices:
+                    sig = extract_signature(
+                        sl, embedding_model=self._config.embedding_model
+                    )
+                    self._index.add(sig)
+                    self._slice_map[(sl.trajectory_id, sl.slice_index)] = sl
+
+    async def _process_sub_problem(
+        self, sub_problem: dict, spec_id: str
+    ) -> list[SFTCandidate]:
+        """Recall + judge for a single sub_problem."""
+        structured_filters = sub_problem.get("structured_filters", {})
+        keywords = sub_problem.get("keywords", [])
+        hyde_positive = sub_problem.get("hyde_positive", [])
+        target_capability = sub_problem.get("target_capability", [])
+        trajectory_signal = sub_problem.get("trajectory_signal", "")
+        sub_problem_id = sub_problem.get("id", "unknown")
+
+        # Compute query embeddings from hyde_positive (if embedding model available)
+        query_embeddings = []
+        if self._config.embedding_model and hyde_positive:
+            query_embeddings = self._config.embedding_model.embed_batch(hyde_positive)
+
+        # Recall
+        recalled_sigs = self._index.recall(
+            structured_filters=structured_filters,
+            keywords=keywords,
+            query_embeddings=query_embeddings,
+            top_n=self._config.recall_top_n,
+        )
+
+        if not recalled_sigs:
+            return []
+
+        # Map signatures back to slices
+        recalled_slices = []
+        for sig in recalled_sigs:
+            key = (sig.trajectory_id, sig.slice_index)
+            if key in self._slice_map:
+                recalled_slices.append(self._slice_map[key])
+
+        if not recalled_slices:
+            return []
+
+        # Judge
+        judge_results = await self._judge.judge_batch(
+            slices=recalled_slices,
+            target_capability=target_capability,
+            trajectory_signal=trajectory_signal,
+        )
+
+        # Collect matches into SFTCandidates
+        candidates = []
+        for sl, jr in zip(recalled_slices, judge_results):
+            if jr.match and jr.confidence >= self._config.min_confidence:
+                candidates.append(SFTCandidate(
+                    trajectory_id=sl.trajectory_id,
+                    trajectory_path=self._traj_paths.get(sl.trajectory_id, ""),
+                    matched_problems=[{
+                        "problem_spec_id": spec_id,
+                        "sub_problem_id": sub_problem_id,
+                        "capability": target_capability,
+                        "confidence": jr.confidence,
+                        "loss_mask_spans": jr.spans,
+                    }],
+                ))
+
+        return candidates
