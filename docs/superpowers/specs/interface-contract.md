@@ -61,7 +61,6 @@
 {
   "languages": string[] | null,             // 可选。枚举值见 §2.1
   "tools_used": string[] | null,            // 可选。枚举值见 §2.2
-  "outcome_transition": string[] | null,    // 可选。枚举值见 §2.3
   "min_turns": integer | null,              // 可选。最小轮次数，≥1
   "has_verification_step": boolean | null   // 可选。是否要求含验证步骤
 }
@@ -105,15 +104,11 @@
 | 枚举值 | Claude Code 标准内置工具名：`"Bash"`, `"Read"`, `"Write"`, `"Edit"`, `"Glob"`, `"Grep"`, `"WebFetch"`, `"WebSearch"`, `"Task"`, `"TodoWrite"`, `"NotebookEdit"`；未识别工具归入 `"other"` |
 | 匹配语义 | 交集非空即命中（OR） |
 
-### 2.3 outcome_transition
+### 2.3 ~~outcome_transition~~（已移除）
 
-| 契约 | 说明 |
-|------|------|
-| 字段名 | `outcome_transition`（两侧同名） |
-| 类型 | `string[]`（Problem Spec 侧可指定多个可接受值，交集匹配） |
-| 来源（模块 1 侧） | 切片签名免费层 C 组 `outcome_transition` 字段（单值） |
-| 枚举值 | `"failed→success"`, `"success_only"`, `"failed_only"`, `"no_execution"`（两侧取值完全一致，无映射层） |
-| 匹配语义 | 切片的 `outcome_transition` 值 ∈ Problem Spec 指定的值集合即命中 |
+> **已移除**（2026-07-08）。成功/失败判定改由模块 1 Phase 4 LLM 精判承担，不再作为签名层的结构化过滤字段。
+> **理由**：轨迹无结构化 exit code，从 tool_result 文本推断成功/失败成本高且不可靠；LLM 精判天然覆盖"是否正向演示能力"的判断，包含成功与否。
+> 保留 §2.4 / §2.5 编号不变，避免引用连锁改动。
 
 ### 2.4 min_turns
 
@@ -254,7 +249,6 @@ error_recovery                         (parent: null)
 1. **每条 fixture 切片签名**至少包含以下被引用字段：
    - `languages`: string[]（从 §2.1 枚举选）
    - `tools_used`: string[]（从 §2.2 枚举选）
-   - `outcome_transition`: string（`"failed→success"` / `"success_only"` / `"failed_only"` / `"no_execution"`）
    - `turn_count`: integer
    - `slice_type`: string
    - `bm25_tokens`: string[]（按 §3 口径）

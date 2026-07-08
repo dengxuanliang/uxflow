@@ -38,7 +38,7 @@ def test_parse_call2_success():
         "trajectory_signal": "observation 含 SyntaxError",
         "hyde_positive": ["hyp1 text here over 20 chars for validity", "hyp2 text here over 20 chars"],
         "keywords": ["SyntaxError", "python"],
-        "structured_filters": {"languages": ["python"], "outcome_transition": ["failed→success"]},
+        "structured_filters": {"languages": ["python"]},
         "confidence": 0.92,
         "route": "pass"
     }]'''

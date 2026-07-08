@@ -213,7 +213,6 @@ class QueryCompiler:
         return StructuredFilters(
             languages=d.get("languages"),
             tools_used=d.get("tools_used"),
-            outcome_transition=d.get("outcome_transition"),
             min_turns=d.get("min_turns"),
             has_verification_step=d.get("has_verification_step"),
         )

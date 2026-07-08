@@ -29,7 +29,7 @@ async def test_two_call_happy_path(taxonomy):
         "trajectory_signal": "observation 含 SyntaxError",
         "hyde_positive": ["正例片段一，超过二十字符的假设轨迹", "正例片段二，超过二十字符的假设轨迹"],
         "keywords": ["SyntaxError", "python"],
-        "structured_filters": {"languages": ["python"], "outcome_transition": ["failed→success"]},
+        "structured_filters": {"languages": ["python"]},
         "confidence": 0.92,
         "route": "pass"
     }]'''

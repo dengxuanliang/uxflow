@@ -15,7 +15,6 @@ __all__ = [
     "DroppedSubProblem",
     "LANGUAGES",
     "TOOLS_USED",
-    "OUTCOME_TRANSITIONS",
     "DROP_REASONS",
     "validate_problem_spec",
 ]
@@ -31,10 +30,6 @@ TOOLS_USED = frozenset([
     "WebFetch", "WebSearch", "Task", "TodoWrite", "NotebookEdit", "other",
 ])
 
-OUTCOME_TRANSITIONS = frozenset([
-    "failed→success", "success_only", "failed_only", "no_execution",
-])
-
 DROP_REASONS = frozenset([
     "ambiguous", "not_applicable", "label_diverged", "other",
 ])
@@ -42,10 +37,9 @@ DROP_REASONS = frozenset([
 
 @dataclass
 class StructuredFilters:
-    """契约 §1.3 StructuredFilters — 5 fields, all optional."""
+    """契约 §1.3 StructuredFilters — 4 fields, all optional."""
     languages: list[str] | None = None
     tools_used: list[str] | None = None
-    outcome_transition: list[str] | None = None
     min_turns: int | None = None
     has_verification_step: bool | None = None
 
@@ -58,10 +52,6 @@ class StructuredFilters:
             for v in self.tools_used:
                 if v not in TOOLS_USED:
                     raise ValueError(f"tools_used: invalid value '{v}'. Must be one of {sorted(TOOLS_USED)}")
-        if self.outcome_transition:
-            for v in self.outcome_transition:
-                if v not in OUTCOME_TRANSITIONS:
-                    raise ValueError(f"outcome_transition: invalid value '{v}'. Must be one of {sorted(OUTCOME_TRANSITIONS)}")
         if self.min_turns is not None and self.min_turns < 1:
             raise ValueError("min_turns must be >= 1")
 
@@ -140,7 +130,6 @@ def _parse_structured_filters(d: dict | None) -> StructuredFilters:
     return StructuredFilters(
         languages=d.get("languages"),
         tools_used=d.get("tools_used"),
-        outcome_transition=d.get("outcome_transition"),
         min_turns=d.get("min_turns"),
         has_verification_step=d.get("has_verification_step"),
     )

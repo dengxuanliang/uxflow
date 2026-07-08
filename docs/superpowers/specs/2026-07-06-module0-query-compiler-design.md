@@ -102,7 +102,7 @@ Part 2 行为随词表状态动态切换：
 | **输出** | `keywords`（字符串列表）+ `structured_filters`（字段条件 dict） |
 | **是否调用 LLM** | ✅ 是，合并进 Call 2 |
 | **keywords 内容** | 报错关键词（`SyntaxError`、`EOF`）、工具名、API/库名、语言名 |
-| **structured_filters 内容** | 对轨迹签名字段的过滤条件，如 `languages`、`tools_used`、`outcome_transition`、`min_turns`（字段名与枚举值以接口契约为准） |
+| **structured_filters 内容** | 对轨迹签名字段的过滤条件，如 `languages`、`tools_used`、`min_turns`、`has_verification_step`（字段名与枚举值以接口契约为准） |
 
 ### Part 6：置信度与分流（Confidence & Routing）
 
@@ -222,7 +222,7 @@ Problem Spec 结构与字段类型以**接口契约**为准（`raw_input` / `dom
       "trajectory_signal": "observation 含 SyntaxError 且 tool_call 参数含 python 代码",
       "hyde_positive": ["<假设正例: 工具调用中正确编写 python，observation 正常返回>"],
       "keywords": ["SyntaxError", "import", "python"],
-      "structured_filters": {"languages": ["python"], "outcome_transition": ["failed→success"]},
+      "structured_filters": {"languages": ["python"]},
       "confidence": 0.90,
       "route": "pass"
     },
@@ -236,7 +236,7 @@ Problem Spec 结构与字段类型以**接口契约**为准（`raw_input` / `dom
       "trajectory_signal": "末轮命中 max_turns / 最后一步为未返回的 tool_call",
       "hyde_positive": ["<假设正例: 检测到接近 max_turns 时主动总结进度并完成收尾>"],
       "keywords": ["max_turns", "truncated", "incomplete"],
-      "structured_filters": {"outcome_transition": ["failed→success", "success_only"], "min_turns": 5},
+      "structured_filters": {"min_turns": 5},
       "confidence": 0.84,
       "route": "pass"
     }
@@ -351,13 +351,13 @@ Step 4：写回 capability_labels（更新 ES）
 }
 ```
 
-从中组装查询条件（纯规则）：BM25 用 `keywords`；向量用 `description_embedding`；结构化过滤从标签语义推断（如 `languages=python`、`outcome_transition` 含 success）。
+从中组装查询条件（纯规则）：BM25 用 `keywords`；向量用 `description_embedding`；结构化过滤从标签语义推断（如 `languages=python`、`min_turns` 等）。
 
 **Step 2：粗筛候选（零 LLM）**
 
 | 通道 | 动作 | 缩小幅度 |
 |------|------|---------|
-| ES 结构化过滤 | `outcome_transition` 含 success + `languages` 等 | 1000 万 → ~200 万 |
+| ES 结构化过滤 | `languages` + `tools_used` + `min_turns` 等 | 1000 万 → ~200 万 |
 | Qdrant 向量召回 | `description_embedding` 在过滤子集内 ANN，top-30000 | 200 万 → 3 万 |
 | ES BM25 召回 | `keywords` 在过滤子集内检索，top-30000 | 200 万 → 3 万 |
 | RRF 融合去重 | 两路合并 | → 约 3-5 万候选 |

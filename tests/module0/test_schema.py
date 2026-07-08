@@ -6,7 +6,6 @@ from module0.schema import (
     DroppedSubProblem,
     LANGUAGES,
     TOOLS_USED,
-    OUTCOME_TRANSITIONS,
     DROP_REASONS,
     validate_problem_spec,
 )
@@ -19,8 +18,6 @@ def test_structured_filters_enums():
     assert "Bash" in TOOLS_USED
     assert "other" in TOOLS_USED
     assert len(TOOLS_USED) == 12
-    assert "failed→success" in OUTCOME_TRANSITIONS
-    assert len(OUTCOME_TRANSITIONS) == 4
     assert "ambiguous" in DROP_REASONS
     assert len(DROP_REASONS) == 4
 
