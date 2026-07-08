@@ -138,3 +138,121 @@ async def test_dropped_audit_records(taxonomy):
     assert len(spec.sub_problems) == 0
     assert len(dropped) == 1
     assert dropped[0].drop_reason == "not_applicable"
+
+
+# ── Regression tests for review bug fixes ──
+
+async def test_c2_invalid_pass_item_degrades_not_crashes(taxonomy):
+    """C2: a schema-invalid pass item (4 labels) degrades to drop, does not crash."""
+    call1_resp = '{"sub_problems": [{"id": "p1", "raw_text": "问题", "failure_summary": "描述"}]}'
+    # 4 target_capability labels violates the 1-3 constraint (valid JSON,
+    # fails at schema validation — exactly what C2 must isolate)
+    call2_resp = '''[{
+        "id": "p1",
+        "target_capability": ["a", "b", "c", "d"],
+        "trajectory_signal": "s",
+        "hyde_positive": ["padding one text here", "padding two text here"],
+        "keywords": ["k"],
+        "structured_filters": {},
+        "confidence": 0.9,
+        "route": "pass"
+    }]'''
+    gw = FakeGateway([call1_resp, call2_resp])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+
+    # Must not raise
+    spec = await compiler.compile("问题")
+    # Invalid pass degraded to drop, not in sub_problems
+    assert len(spec.sub_problems) == 0
+    assert len(compiler.dropped_records) == 1
+
+
+async def test_c2_invalid_hyde_count_degrades(taxonomy):
+    """C2: pass item with 1 hyde segment (needs 2-3) degrades, does not crash."""
+    call1_resp = '{"sub_problems": [{"id": "p1", "raw_text": "问题", "failure_summary": "描述"}]}'
+    call2_resp = '''[{
+        "id": "p1",
+        "target_capability": ["valid_syntax_in_toolcall"],
+        "trajectory_signal": "s",
+        "hyde_positive": ["only one segment"],
+        "keywords": ["k"],
+        "structured_filters": {},
+        "confidence": 0.9,
+        "route": "pass"
+    }]'''
+    gw = FakeGateway([call1_resp, call2_resp])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+
+    spec = await compiler.compile("问题")
+    assert len(spec.sub_problems) == 0
+    assert len(compiler.dropped_records) == 1
+
+
+async def test_c2_invalid_drop_reason_falls_back_to_other(taxonomy):
+    """C2: an out-of-enum drop_reason from LLM falls back to 'other', no crash."""
+    call1_resp = '{"sub_problems": [{"id": "p1", "raw_text": "问题", "failure_summary": "描述"}]}'
+    call2_resp = '''[{
+        "id": "p1",
+        "target_capability": ["x"],
+        "trajectory_signal": "s",
+        "hyde_positive": ["padding one text here", "padding two text here"],
+        "keywords": ["k"],
+        "structured_filters": {},
+        "confidence": 0.3,
+        "route": "drop",
+        "drop_reason": "totally_made_up_reason"
+    }]'''
+    gw = FakeGateway([call1_resp, call2_resp])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+
+    spec = await compiler.compile("问题")
+    assert len(compiler.dropped_records) == 1
+    assert compiler.dropped_records[0].drop_reason == "other"
+
+
+async def test_c3_embeddings_stored(taxonomy):
+    """C3: hyde_positive embeddings are stored in hyde_embeddings, not discarded."""
+
+    class FakeEmbedding:
+        dimension = 1536
+        def embed_batch(self, texts):
+            return [[0.1] * 1536 for _ in texts]
+
+    call1_resp = '{"sub_problems": [{"id": "p1", "raw_text": "写入py文件有语法错误", "failure_summary": "语法错误"}]}'
+    call2_resp = '''[{
+        "id": "p1",
+        "target_capability": ["valid_syntax_in_toolcall"],
+        "trajectory_signal": "s",
+        "hyde_positive": ["padding one text here", "padding two text here"],
+        "keywords": ["k"],
+        "structured_filters": {},
+        "confidence": 0.9,
+        "route": "pass"
+    }]'''
+    gw = FakeGateway([call1_resp, call2_resp])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=FakeEmbedding())
+
+    spec = await compiler.compile("写入py文件有语法错误")
+    assert len(spec.sub_problems) == 1
+    # Embeddings stored keyed by sub-problem id
+    assert "p1" in compiler.hyde_embeddings
+    assert len(compiler.hyde_embeddings["p1"]) == 2  # 2 hyde segments
+    assert len(compiler.hyde_embeddings["p1"][0]) == 1536
+
+
+async def test_i1_dropped_records_reset_per_compile(taxonomy):
+    """I1: each compile() resets dropped_records (no cross-call leakage)."""
+    call1_resp = '{"sub_problems": [{"id": "p1", "raw_text": "环境问题", "failure_summary": "基础设施"}]}'
+    call2_resp = '[{"id": "p1", "target_capability": ["x"], "trajectory_signal": "s", "hyde_positive": ["padding one text here", "padding two text here"], "keywords": ["k"], "structured_filters": {}, "confidence": 0.3, "route": "drop", "drop_reason": "not_applicable"}]'
+    # First compile
+    gw1 = FakeGateway([call1_resp, call2_resp])
+    compiler = QueryCompiler(gateway=gw1, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    await compiler.compile("环境问题")
+    assert len(compiler.dropped_records) == 1
+
+    # Second compile with a clean pass — dropped_records must reset to 0
+    call2_pass = '[{"id": "p1", "target_capability": ["valid_syntax_in_toolcall"], "trajectory_signal": "s", "hyde_positive": ["padding one text here", "padding two text here"], "keywords": ["k"], "structured_filters": {}, "confidence": 0.9, "route": "pass"}]'
+    gw2 = FakeGateway([call1_resp, call2_pass])
+    compiler._gateway = gw2
+    await compiler.compile("环境问题")
+    assert len(compiler.dropped_records) == 0  # reset, not accumulated

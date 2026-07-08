@@ -48,10 +48,15 @@ class QueryCompiler:
         self._embedding_model = embedding_model
         self._max_tokens = max_tokens
         self.dropped_records: list[DroppedSubProblem] = []
+        # Side-channel: HyDE query-anchor embeddings per sub-problem id.
+        # Not part of the Problem Spec (contract §4 — computed query anchors,
+        # consumed by the downstream retrieval layer / Module 1).
+        self.hyde_embeddings: dict[str, list[list[float]]] = {}
 
     async def compile(self, raw_input: str) -> ProblemSpec:
         """Run the full compilation pipeline. At most 4 LLM calls."""
         self.dropped_records = []
+        self.hyde_embeddings = {}
 
         # ── Call 1: decompose ──
         c1_text, _ = await self._gateway.call(
@@ -79,10 +84,16 @@ class QueryCompiler:
             confidence = result.get("confidence", 0)
 
             if route == "pass" and confidence >= _PASS_THRESHOLD:
-                passed.append(self._build_sub_problem(result, raw, origin="original", parent_id=None))
+                # Per-item isolation: a schema-invalid pass item (e.g. LLM
+                # returned 4 labels or 1 hyde segment) degrades to a drop
+                # instead of crashing the whole batch.
+                try:
+                    passed.append(self._build_sub_problem(result, raw, origin="original", parent_id=None))
+                except ValueError:
+                    self._record_dropped(result, raw, "other")
             else:
                 reason = result.get("drop_reason", "other")
-                self.dropped_records.append(self._build_dropped(result, raw, reason))
+                self._record_dropped(result, raw, reason)
                 if reason == "ambiguous":
                     ambiguous.append({
                         "id": sp_id,
@@ -98,7 +109,8 @@ class QueryCompiler:
         # ── Embedding (optional) ──
         if self._embedding_model is not None:
             for sp in passed:
-                self._embedding_model.embed_batch(sp.hyde_positive)
+                vecs = self._embedding_model.embed_batch(sp.hyde_positive)
+                self.hyde_embeddings[sp.id] = vecs
 
         return ProblemSpec(raw_input=raw_input, domain="agentic_swe", sub_problems=passed)
 
@@ -135,9 +147,12 @@ class QueryCompiler:
             sp_id = result["id"]
             raw = clarified_by_id.get(sp_id, {})
             if result.get("confidence", 0) >= _PASS_THRESHOLD:
-                recovered.append(self._build_sub_problem(
-                    result, raw, origin="clarified", parent_id=parent_map.get(sp_id),
-                ))
+                try:
+                    recovered.append(self._build_sub_problem(
+                        result, raw, origin="clarified", parent_id=parent_map.get(sp_id),
+                    ))
+                except ValueError:
+                    pass  # schema-invalid clarified item silently dropped
         return recovered
 
     def _build_sub_problem(self, result: dict, raw: dict, *, origin: str,
@@ -158,6 +173,12 @@ class QueryCompiler:
         )
 
     def _build_dropped(self, result: dict, raw: dict, reason: str) -> DroppedSubProblem:
+        # Dropped items may carry invalid enums (that's often why they were
+        # dropped). Use lenient filters so recording an audit trail never fails.
+        try:
+            filters = self._build_filters(result.get("structured_filters"))
+        except ValueError:
+            filters = StructuredFilters()
         return DroppedSubProblem(
             id=result["id"],
             origin="original",
@@ -168,11 +189,23 @@ class QueryCompiler:
             trajectory_signal=result.get("trajectory_signal", ""),
             hyde_positive=result.get("hyde_positive", ["", ""]),
             keywords=result.get("keywords", []),
-            structured_filters=self._build_filters(result.get("structured_filters")),
+            structured_filters=filters,
             confidence=result.get("confidence", 0.0),
             route="drop",
             drop_reason=reason,
         )
+
+    def _record_dropped(self, result: dict, raw: dict, reason: str) -> None:
+        """Append a dropped record, tolerating schema-invalid input.
+
+        DroppedSubProblem validation is minimal (only route + drop_reason), but
+        an out-of-range drop_reason from the LLM would still raise. Fall back to
+        'other' so a bad reason never crashes the compile.
+        """
+        try:
+            self.dropped_records.append(self._build_dropped(result, raw, reason))
+        except ValueError:
+            self.dropped_records.append(self._build_dropped(result, raw, "other"))
 
     def _build_filters(self, d: dict | None) -> StructuredFilters:
         if not d:

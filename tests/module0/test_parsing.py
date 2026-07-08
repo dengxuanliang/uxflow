@@ -92,3 +92,37 @@ def test_parse_call3_max_4_clarified():
     }]'''
     result = parse_call3_response(raw)
     assert len(result[0]["clarified"]) <= 4
+
+
+# ── Regression tests for C1: braces/brackets inside JSON string values ──
+
+def test_parse_braces_in_string_value():
+    """C1 regression: braces inside string values must not truncate extraction."""
+    raw = '{"sub_problems": [{"id": "p1", "raw_text": "code: if err != nil { return }", "failure_summary": "closing brace } in text"}]}'
+    result = parse_call1_response(raw)
+    assert len(result) == 1
+    assert "}" in result[0]["raw_text"]
+
+
+def test_parse_brackets_in_trajectory_signal():
+    """C1 regression: brackets in trajectory_signal (common with code)."""
+    raw = '''[{
+        "id": "p1",
+        "target_capability": ["valid_syntax_in_toolcall"],
+        "trajectory_signal": "observation contains: for i in range(10) { print(i) }",
+        "hyde_positive": ["hyp1 padding text here", "hyp2 padding text here"],
+        "keywords": ["syntax"],
+        "structured_filters": {},
+        "confidence": 0.9,
+        "route": "pass"
+    }]'''
+    result = parse_call2_response(raw)
+    assert result[0]["id"] == "p1"
+    assert "}" in result[0]["trajectory_signal"]
+
+
+def test_parse_escaped_quotes_in_string():
+    """C1 regression: escaped quotes inside strings must not break scanner."""
+    raw = r'{"sub_problems": [{"id": "p1", "raw_text": "he said \"hello\"", "failure_summary": "test"}]}'
+    result = parse_call1_response(raw)
+    assert len(result) == 1

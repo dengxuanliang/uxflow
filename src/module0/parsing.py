@@ -25,8 +25,44 @@ class ParseError(ValueError):
     pass
 
 
+def _scan_balanced(text: str, start: int) -> int | None:
+    """Return the index just past the balanced bracket group starting at `start`.
+
+    String-literal aware: braces/brackets inside JSON string values (including
+    escaped quotes) are NOT counted. Returns None if never balanced.
+    """
+    open_c = text[start]
+    close_c = '}' if open_c == '{' else ']'
+    depth = 0
+    in_string = False
+    escaped = False
+    for j in range(start, len(text)):
+        ch = text[j]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == '\\':
+                escaped = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == open_c:
+            depth += 1
+        elif ch == close_c:
+            depth -= 1
+            if depth == 0:
+                return j + 1
+    return None
+
+
 def _extract_json(text: str) -> str:
-    """Strip markdown fences and surrounding text to find JSON."""
+    """Strip markdown fences and surrounding text to find JSON.
+
+    String-literal aware: braces inside string values (e.g. code snippets in
+    trajectory_signal / hyde_positive) do not break extraction.
+    """
     if not text:
         raise ParseError("Empty response")
     match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
@@ -34,16 +70,9 @@ def _extract_json(text: str) -> str:
         return match.group(1).strip()
     for i, c in enumerate(text):
         if c in ('{', '['):
-            depth = 0
-            open_c = c
-            close_c = '}' if c == '{' else ']'
-            for j in range(i, len(text)):
-                if text[j] == open_c:
-                    depth += 1
-                elif text[j] == close_c:
-                    depth -= 1
-                    if depth == 0:
-                        return text[i:j+1]
+            end = _scan_balanced(text, i)
+            if end is not None:
+                return text[i:end]
             break
     raise ParseError(f"No valid JSON found in response: {text[:200]}...")
 

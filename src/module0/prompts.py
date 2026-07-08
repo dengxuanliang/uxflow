@@ -274,7 +274,13 @@ _CALL2_PRIME_EXTRA = """
 
 
 def build_call2_prime_messages(clarified_sub_problems: list[dict], taxonomy: Taxonomy) -> list[dict]:
-    """Same as Call 2 but with additional constraints for no further disambiguation."""
+    """Same as Call 2 but with additional constraints for no further disambiguation.
+
+    Builds fresh message dicts (never mutates the base messages in place) so the
+    caller can safely reuse or cache build_call2_messages output.
+    """
     base_msgs = build_call2_messages(clarified_sub_problems, taxonomy)
-    base_msgs[0]["content"] += _CALL2_PRIME_EXTRA
-    return base_msgs
+    return [
+        {"role": base_msgs[0]["role"], "content": base_msgs[0]["content"] + _CALL2_PRIME_EXTRA},
+        *base_msgs[1:],
+    ]
