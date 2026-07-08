@@ -1,0 +1,22 @@
+{
+  "version": "0.1.0",
+  "updated_at": "2026-07-06T00:00:00Z",
+  "labels": [
+    {"label": "code_generation", "parent": null, "new_root": false, "description": "代码生成相关能力", "keywords": ["code", "generate", "write"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "valid_syntax_in_toolcall", "parent": "code_generation", "new_root": false, "description": "工具调用中生成合法代码（含 import）", "keywords": ["syntax", "import", "SyntaxError"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "correct_indentation", "parent": "code_generation", "new_root": false, "description": "写入文件时缩进正确", "keywords": ["indentation", "indent", "whitespace", "tab"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "correct_shell_embedding", "parent": "code_generation", "new_root": false, "description": "bash 中正确嵌入其他语言", "keywords": ["bash", "shell", "heredoc", "escape"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "file_localization_and_edit", "parent": "code_generation", "new_root": false, "description": "正确定位目标文件并成功编辑", "keywords": ["file", "edit", "locate", "path"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "tool_use", "parent": null, "new_root": false, "description": "工具使用相关能力", "keywords": ["tool", "function_call", "tool_call"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "wellformed_tool_call", "parent": "tool_use", "new_root": false, "description": "tool_call 结构正确，不错位到 thinking 块", "keywords": ["tool_call", "JSON", "wellformed", "malformed"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "planning", "parent": null, "new_root": false, "description": "规划相关能力", "keywords": ["plan", "requirement", "analysis"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "requirement_completeness", "parent": "planning", "new_root": false, "description": "覆盖需求中所有明确功能点", "keywords": ["requirement", "complete", "coverage", "feature"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "requirement_analysis_before_coding", "parent": "planning", "new_root": false, "description": "复杂任务先分析需求再编码", "keywords": ["analysis", "understand", "before", "coding"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "execution_control", "parent": null, "new_root": false, "description": "执行控制相关能力", "keywords": ["execution", "control", "loop", "strategy"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "reproduce_before_fix", "parent": "execution_control", "new_root": false, "description": "修改前先复现问题", "keywords": ["reproduce", "verify", "before", "fix"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "avoid_redundant_repetition", "parent": "execution_control", "new_root": false, "description": "避免重复动作循环，及时切换策略", "keywords": ["repeat", "loop", "stuck", "strategy"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "self_verification", "parent": "execution_control", "new_root": false, "description": "实现后自主验证，不依赖用户提示才发现错误", "keywords": ["verify", "test", "check", "self"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "error_recovery", "parent": null, "new_root": false, "description": "错误恢复相关能力", "keywords": ["error", "fix", "recovery", "debug"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"},
+    {"label": "effective_error_fix", "parent": "error_recovery", "new_root": false, "description": "用户指出后修复真正生效", "keywords": ["fix", "resolve", "effective", "bug"], "description_embedding": [], "taxonomy_extension": false, "created_at": "2026-07-06T00:00:00Z"}
+  ]
+}
