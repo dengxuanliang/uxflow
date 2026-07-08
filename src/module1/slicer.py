@@ -59,14 +59,18 @@ def _score_boundary(steps: list[Step], idx: int) -> float:
     if step.role == "user":
         score += 10.0
 
-    # Tool type switch
-    if idx > 0:
-        prev_tool = steps[idx - 1].tool_call_name or ""
-        curr_tool = step.tool_call_name or ""
-        prev_type = _tool_type(prev_tool)
-        curr_type = _tool_type(curr_tool)
-        if prev_type and curr_type and prev_type != curr_type:
-            score += 5.0
+    # Tool type switch: look backwards past tool-result steps to find previous assistant tool call
+    if step.role == "assistant" and step.tool_call_name:
+        prev_tool_step = None
+        for j in range(idx - 1, -1, -1):
+            if steps[j].role == "assistant" and steps[j].tool_call_name:
+                prev_tool_step = steps[j]
+                break
+        if prev_tool_step:
+            prev_type = _tool_type(prev_tool_step.tool_call_name)
+            curr_type = _tool_type(step.tool_call_name)
+            if prev_type and curr_type and prev_type != curr_type:
+                score += 5.0
 
     # Transition phrase in assistant content
     if step.role == "assistant" and _TRANSITION_PHRASES.search(step.content[:200]):

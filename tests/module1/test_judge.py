@@ -129,3 +129,32 @@ async def test_judge_gateway_returns_none():
     assert len(results) == 1
     assert results[0].match is False
     assert results[0].confidence == 0.0
+
+
+def test_parse_judge_response_confidence_string():
+    """Non-numeric confidence string like 'high' must not raise; defaults to no-match."""
+    raw = '[{"match": true, "confidence": "high", "spans": [], "reasoning": "ok"}]'
+    results = _parse_judge_response(raw, n_expected=1)
+    assert len(results) == 1
+    # coercion error → fallback no-match
+    assert results[0].match is False
+    assert results[0].confidence == 0.0
+    assert results[0].reasoning == "field_coercion_error"
+
+
+def test_parse_judge_response_match_string_false():
+    """String 'false' must be parsed as False, not truthy bool(str)."""
+    raw = '[{"match": "false", "confidence": 0.9, "spans": [], "reasoning": "nope"}]'
+    results = _parse_judge_response(raw, n_expected=1)
+    assert len(results) == 1
+    assert results[0].match is False
+    assert results[0].confidence == 0.9
+
+
+def test_parse_judge_response_match_string_true():
+    """String 'true' must be parsed as True."""
+    raw = '[{"match": "true", "confidence": 0.75, "spans": [], "reasoning": "yes"}]'
+    results = _parse_judge_response(raw, n_expected=1)
+    assert len(results) == 1
+    assert results[0].match is True
+    assert results[0].confidence == 0.75

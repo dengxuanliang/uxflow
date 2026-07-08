@@ -126,12 +126,20 @@ def _parse_judge_response(raw: str | None, n_expected: int) -> list[JudgeResult]
     for i in range(n_expected):
         if i < len(data) and isinstance(data[i], dict):
             item = data[i]
-            results.append(JudgeResult(
-                match=bool(item.get("match", False)),
-                confidence=float(item.get("confidence", 0.0)),
-                spans=item.get("spans", []),
-                reasoning=str(item.get("reasoning", "")),
-            ))
+            try:
+                match_val = item.get("match", False)
+                if isinstance(match_val, str):
+                    match_val = match_val.lower() in ("true", "1", "yes")
+                results.append(JudgeResult(
+                    match=bool(match_val),
+                    confidence=float(item.get("confidence", 0.0)),
+                    spans=item.get("spans") if isinstance(item.get("spans"), list) else [],
+                    reasoning=str(item.get("reasoning", "")),
+                ))
+            except (ValueError, TypeError):
+                results.append(JudgeResult(
+                    match=False, confidence=0.0, spans=[], reasoning="field_coercion_error"
+                ))
         else:
             results.append(JudgeResult(
                 match=False, confidence=0.0, spans=[], reasoning="missing_in_response"

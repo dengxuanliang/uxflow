@@ -203,3 +203,34 @@ def test_null_filters_skip_filtering():
         top_n=10,
     )
     assert len(results) == 2
+
+
+def test_bm25_mixed_case_idf():
+    """Mixed-case tokens in bm25_tokens must not defeat IDF weighting.
+
+    Before the fix, df was built from raw-case tokens but queries were lowercased,
+    so 'SyntaxError' in bm25_tokens was never found by df.get('syntaxerror', 0)
+    and IDF always evaluated as log(1.5) regardless of how common the token was.
+    After the fix both df and tf use lowercased tokens so IDF is correctly computed.
+    """
+    idx = MemoryIndex()
+    # t1 has the mixed-case token that matches the query
+    idx.add(_make_sig("t1", bm25_tokens=["SyntaxError", "Python", "import"]))
+    # t2 does not have matching tokens
+    idx.add(_make_sig("t2", bm25_tokens=["timeout", "network"]))
+    # t3 also has SyntaxError (all-caps variant) to raise df above 1
+    idx.add(_make_sig("t3", bm25_tokens=["SYNTAXERROR", "java"]))
+
+    results = idx.recall(
+        structured_filters={},
+        keywords=["syntaxerror"],
+        query_embeddings=[],
+        top_n=3,
+    )
+    # t1 and t3 should both appear and rank above t2 (which has no matching tokens)
+    traj_ids = [r.trajectory_id for r in results]
+    assert "t1" in traj_ids
+    assert "t3" in traj_ids
+    # t2 has no BM25 score so must rank below the matching docs
+    assert traj_ids.index("t2") > traj_ids.index("t1")
+    assert traj_ids.index("t2") > traj_ids.index("t3")

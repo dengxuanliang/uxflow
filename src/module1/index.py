@@ -120,7 +120,7 @@ class MemoryIndex:
         n_docs = len(self._signatures)
         df: Counter = Counter()
         for sig in self._signatures:
-            for token in set(sig.bm25_tokens):
+            for token in set(t.lower() for t in sig.bm25_tokens):
                 df[token] += 1
 
         scores: dict[int, float] = {}
