@@ -302,7 +302,7 @@ Problem Spec 结构与字段类型以**接口契约**为准（`raw_input` / `dom
 
 **向量 fallback 的兜底作用**：前两路失效（如新顶层标签空窗期），第三路保证结果不为空——降级但非开天窗。回填完成后第一路精确命中接管。
 
-**ANN 性能说明**：系统用 HNSW（对数级图搜索），非暴力 KNN（线性级）。1000 万切片上单次查询仍是毫秒级。再叠加 filtered search（先 ES 结构化过滤缩域到几十万再 ANN），查询不在性能瓶颈。耗时的是离线建索引和内存（1536 维 × 1000 万 ≈ 60GB 常驻），不是查询本身。
+**ANN 性能说明**：系统用 HNSW（对数级图搜索），非暴力 KNN（线性级）。1000 万切片上单次查询仍是毫秒级。再叠加 filtered search（先 ES 结构化过滤缩域到几十万再 ANN），查询不在性能瓶颈。耗时的是离线建索引和内存（1024 维 × 1000 万 ≈ 40GB 常驻），不是查询本身。
 
 #### 完整演化生命周期
 
@@ -347,7 +347,7 @@ Step 4：写回 capability_labels（更新 ES）
   "parent": "code_generation",
   "description": "在工具调用中正确编写正则表达式，转义符使用正确",
   "keywords": ["regex", "re.compile", "re.search", "\\\\", "escape", "backslash"],
-  "description_embedding": [/* 1536-d */]
+  "description_embedding": [/* 1024-d */]
 }
 ```
 

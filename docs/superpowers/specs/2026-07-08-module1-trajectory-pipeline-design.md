@@ -113,7 +113,7 @@
 
   // ── E 组：检索字段 ──
   "bm25_tokens": string[],        // 报错关键词 + 工具名 + 库名 + 语言名
-  "embedding": float[1536]        // 对摘要做 Qwen3-Embedding（本地）
+  "embedding": float[1024]        // 对摘要做 Qwen3-Embedding（本地）
 }
 ```
 
@@ -122,7 +122,7 @@
 | 存储 | 内容 | 用途 |
 |------|------|------|
 | Elasticsearch | 全部签名字段（结构化过滤 + BM25） | 粗筛 |
-| Qdrant | embedding（1536-d HNSW） | 向量召回 |
+| Qdrant | embedding（1024-d HNSW） | 向量召回 |
 
 索引设计对齐接口契约 §2（Problem Spec 的 structured_filters 能直接查 ES 的对应字段）。
 

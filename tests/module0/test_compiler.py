@@ -214,9 +214,9 @@ async def test_c3_embeddings_stored(taxonomy):
     """C3: hyde_positive embeddings are stored in hyde_embeddings, not discarded."""
 
     class FakeEmbedding:
-        dimension = 1536
+        dimension = 1024
         def embed_batch(self, texts):
-            return [[0.1] * 1536 for _ in texts]
+            return [[0.1] * 1024 for _ in texts]
 
     call1_resp = '{"sub_problems": [{"id": "p1", "raw_text": "写入py文件有语法错误", "failure_summary": "语法错误"}]}'
     call2_resp = '''[{
@@ -237,7 +237,7 @@ async def test_c3_embeddings_stored(taxonomy):
     # Embeddings stored keyed by sub-problem id
     assert "p1" in compiler.hyde_embeddings
     assert len(compiler.hyde_embeddings["p1"]) == 2  # 2 hyde segments
-    assert len(compiler.hyde_embeddings["p1"][0]) == 1536
+    assert len(compiler.hyde_embeddings["p1"][0]) == 1024
 
 
 async def test_i1_dropped_records_reset_per_compile(taxonomy):

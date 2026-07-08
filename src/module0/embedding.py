@@ -1,6 +1,6 @@
 """Local embedding via Qwen3-Embedding (sentence-transformers).
 
-Produces 1536-d L2-normalized vectors. Runs on MPS (Apple Silicon) or CPU.
+Produces 1024-d L2-normalized vectors. Runs on MPS (Apple Silicon) or CPU.
 Model loaded lazily on first call to avoid import-time overhead.
 
 Contract §4: both sides MUST use the same model + same dimension.
@@ -14,7 +14,7 @@ __all__ = ["EmbeddingModel"]
 
 # Model identifier — pinned per contract §4/§6
 _MODEL_NAME = "Qwen/Qwen3-Embedding-0.6B"
-_DIMENSION = 1536
+_DIMENSION = 1024
 
 
 class EmbeddingModel:
@@ -32,7 +32,7 @@ class EmbeddingModel:
             else:
                 device = "cpu"
 
-        self._model = SentenceTransformer(model_name, device=device)
+        self._model = SentenceTransformer(model_name, device=device, local_files_only=True)
         self._dimension = _DIMENSION
 
     @property
@@ -40,7 +40,7 @@ class EmbeddingModel:
         return self._dimension
 
     def embed(self, text: str) -> list[float]:
-        """Embed a single text. Returns L2-normalized 1536-d vector."""
+        """Embed a single text. Returns L2-normalized 1024-d vector."""
         vec = self._model.encode(
             text,
             normalize_embeddings=True,
@@ -50,7 +50,7 @@ class EmbeddingModel:
         return vec.tolist()
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
-        """Embed multiple texts. Returns list of L2-normalized 1536-d vectors."""
+        """Embed multiple texts. Returns list of L2-normalized 1024-d vectors."""
         if not texts:
             return []
         vecs = self._model.encode(

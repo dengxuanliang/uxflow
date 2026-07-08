@@ -18,7 +18,7 @@ def _make_sig(traj_id, slice_idx=0, languages=None, tools_used=None,
         has_success_pattern=True,
         has_verification_step=has_verification_step,
         bm25_tokens=bm25_tokens or ["syntaxerror", "python"],
-        embedding=embedding or [0.0] * 1536,
+        embedding=embedding or [0.0] * 1024,
     )
 
 
@@ -121,13 +121,13 @@ def test_bm25_recall():
 def test_vector_recall():
     idx = MemoryIndex()
     # t1 embedding close to query
-    emb_query = np.random.randn(1536).astype(np.float32)
+    emb_query = np.random.randn(1024).astype(np.float32)
     emb_query = emb_query / np.linalg.norm(emb_query)
     # t1 = very similar to query
-    emb_t1 = emb_query + np.random.randn(1536) * 0.01
+    emb_t1 = emb_query + np.random.randn(1024) * 0.01
     emb_t1 = emb_t1 / np.linalg.norm(emb_t1)
     # t2 = random direction
-    emb_t2 = np.random.randn(1536).astype(np.float32)
+    emb_t2 = np.random.randn(1024).astype(np.float32)
     emb_t2 = emb_t2 / np.linalg.norm(emb_t2)
 
     idx.add(_make_sig("t1", embedding=emb_t1.tolist()))
@@ -146,12 +146,12 @@ def test_rrf_fusion():
     """BM25 and vector scores fuse via RRF to produce final ranking."""
     idx = MemoryIndex()
     # t1: good BM25, mediocre vector
-    emb_query = [1.0] + [0.0] * 1535
+    emb_query = [1.0] + [0.0] * 1023
     idx.add(_make_sig("t1", bm25_tokens=["syntaxerror", "python", "import"],
-                      embedding=[0.5] + [0.0] * 1535))
+                      embedding=[0.5] + [0.0] * 1023))
     # t2: mediocre BM25, good vector
     idx.add(_make_sig("t2", bm25_tokens=["timeout"],
-                      embedding=[0.99] + [0.0] * 1535))
+                      embedding=[0.99] + [0.0] * 1023))
 
     results = idx.recall(
         structured_filters={},

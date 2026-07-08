@@ -149,7 +149,7 @@
 | Problem Spec 侧 | 对 `hyde_positive` 每段做 embedding，作为向量召回的查询锚 |
 | 模块 1 侧 | 切片签名免费层 E 组 `embedding` 字段（对 context_header + 正文做 embedding） |
 | Embedding 模型 | 两端**必须使用同一模型**。第一版：`Qwen3-Embedding`（0.6B 或 4B，待定；两端锁定同一 checkpoint） |
-| 维度 | 1536（Qwen3-Embedding 支持 MRL 可变维度，统一截取/输出 1536 维） |
+| 维度 | 1024（Qwen3-Embedding-0.6B 原生输出维度） |
 | 归一化 | L2 归一化后存储，余弦相似度等价内积 |
 | 向量库 | Qdrant，HNSW 索引 |
 
@@ -167,7 +167,7 @@
   "new_root": boolean,              // 可选，默认 false。true 表示此标签创建了新顶层父节点
   "description": string,            // 必填。一句话中文描述
   "keywords": string[],             // 必填。用于回填粗筛的 BM25 关键词
-  "description_embedding": float[1536], // 必填。对 description 的 embedding（同 §4 模型）
+  "description_embedding": float[1024], // 必填。对 description 的 embedding（同 §4 模型）
   "taxonomy_extension": boolean,    // 必填。true=LLM 新提议；false=人工预设
   "created_at": string              // 必填。ISO 8601 时间戳
 }
@@ -201,9 +201,9 @@
 
 | 用途 | 输入文本 | 模型 | 维度 | 归一化 |
 |------|---------|------|------|--------|
-| HyDE 正例（查询锚） | `hyde_positive` 各段 | Qwen3-Embedding (0.6B/4B) | 1536 | L2 |
-| 切片 embedding | context_header + 切片正文 | Qwen3-Embedding (0.6B/4B) | 1536 | L2 |
-| 标签 description embedding | `description` 字段 | Qwen3-Embedding (0.6B/4B) | 1536 | L2 |
+| HyDE 正例（查询锚） | `hyde_positive` 各段 | Qwen3-Embedding (0.6B/4B) | 1024 | L2 |
+| 切片 embedding | context_header + 切片正文 | Qwen3-Embedding (0.6B/4B) | 1024 | L2 |
+| 标签 description embedding | `description` 字段 | Qwen3-Embedding (0.6B/4B) | 1024 | L2 |
 
 **一致性约束**：三者必须使用同一模型同一维度，否则向量空间不对齐，召回/回填/去重全部失效。模型切换时需全量重算（一次性成本）。
 
@@ -252,7 +252,7 @@ error_recovery                         (parent: null)
    - `turn_count`: integer
    - `slice_type`: string
    - `bm25_tokens`: string[]（按 §3 口径）
-   - `embedding`: float[1536]（用 §4 指定模型对 fixture 正文做 embedding）
+   - `embedding`: float[1024]（用 §4 指定模型对 fixture 正文做 embedding）
    - `capability_labels`: string[] | null（回填前为 null）
 
 2. **每个 v0 词表标签至少对应 3 条 fixture 切片**（1 条强正例 + 1 条弱相关 + 1 条不相关），用于验证：
