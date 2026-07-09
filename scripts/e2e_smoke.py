@@ -1,4 +1,4 @@
-"""End-to-end smoke test: Module 0 (QueryCompiler) → Module 1 (TrajectoryPipeline).
+"""End-to-end smoke test: Module 0 → Module 1/2 → Module 3.
 
 Connects both modules with real LLM + real local embedding model, runs on fixture
 trajectories, and prints intermediate results at each stage for human inspection.
@@ -21,6 +21,9 @@ from llm_gateway import LLMGateway, GatewayConfig
 from module0 import QueryCompiler, Taxonomy
 from module0.embedding import EmbeddingModel
 from module1.pipeline import TrajectoryPipeline, PipelineConfig
+from module3.compose import GeneralDataConfig
+from module3.pipeline import select_final_dataset
+from module3.selection import SelectionConfig
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -136,12 +139,12 @@ async def main():
         pipeline = TrajectoryPipeline(config=cfg, gateway=gw)
         pipeline._build_index([trajectories_path])
 
-        print(f"索引大小: {pipeline._index.size} 条签名\n")
+        print(f"索引大小: {pipeline._store.size} 条签名\n")
         print("切片明细:")
-        for (traj_id, slice_idx), sl in sorted(pipeline._slice_map.items()):
+        for (traj_id, slice_idx), sl in sorted(pipeline._store._slice_source.items()):
             # Find matching signature
             sig = None
-            for s in pipeline._index._signatures:
+            for s in pipeline._store._signatures:
                 if s.trajectory_id == traj_id and s.slice_index == slice_idx:
                     sig = s
                     break
@@ -162,9 +165,6 @@ async def main():
         # ── Module 1: Recall + Judge per sub_problem ─────────────────────
         _print_section("模块1: 召回 + 精判")
 
-        all_candidates = []
-        spec_id = spec_dict.get("raw_input", "unknown")[:50]
-
         for sp_dict in spec_dict["sub_problems"]:
             sp_id = sp_dict["id"]
             print(f"── 子问题 [{sp_id}] ──")
@@ -180,20 +180,20 @@ async def main():
             hp = sp_dict.get("hyde_positive", [])
             query_embs = cfg.embedding_model.embed_batch(hp) if cfg.embedding_model and hp else []
 
-            filter_passed = pipeline._index._apply_filters(sf)
+            filter_passed = pipeline._store._apply_filters(sf)
             print(f"  过滤后候选: {len(filter_passed)} 条 "
-                  f"(共 {pipeline._index.size} 条签名)")
+                  f"(共 {pipeline._store.size} 条签名)")
             if not filter_passed:
                 # Show which filter eliminated everything
                 for fname, fval in sf.items():
                     if fval is None:
                         continue
                     test_filter = {fname: fval}
-                    n = len(pipeline._index._apply_filters(test_filter))
-                    print(f"    单独 {fname}={fval} → {n}/{pipeline._index.size} 通过")
+                    n = len(pipeline._store._apply_filters(test_filter))
+                    print(f"    单独 {fname}={fval} → {n}/{pipeline._store.size} 通过")
                 # Relax: drop min_turns filter and retry to exercise full pipeline
                 sf_relaxed = {k: (None if k == "min_turns" else v) for k, v in sf.items()}
-                filter_relaxed = pipeline._index._apply_filters(sf_relaxed)
+                filter_relaxed = pipeline._store._apply_filters(sf_relaxed)
                 if filter_relaxed:
                     print(f"  → 放宽 min_turns 后: {len(filter_relaxed)} 条通过，"
                           "继续跑 BM25/向量/judge（仅为观测）")
@@ -206,66 +206,58 @@ async def main():
                     continue
 
             # Show BM25 + vector scores for transparency
-            bm25_scores = pipeline._index._bm25_score(filter_passed, kw) if kw else {}
-            vector_scores = pipeline._index._vector_score(filter_passed, query_embs) if query_embs else {}
+            bm25_scores = pipeline._store._bm25_score(filter_passed, kw) if kw else {}
+            vector_scores = pipeline._store._vector_score(filter_passed, query_embs) if query_embs else {}
             print(f"  BM25 命中: {len(bm25_scores)} 条, "
                   f"向量命中: {len(vector_scores)} 条")
 
-            recalled = pipeline._index.recall(
+            recalled = pipeline._store.recall(
                 structured_filters=sf, keywords=kw,
                 query_embeddings=query_embs, top_n=cfg.recall_top_n)
             print(f"  RRF 召回 top-{cfg.recall_top_n}: {len(recalled)} 条")
             for r in recalled[:5]:
-                print(f"    {r.trajectory_id}/slice{r.slice_index}")
+                print(
+                    f"    {r.signature.trajectory_id}/slice"
+                    f"{r.signature.slice_index} score={r.rrf_score:.4f}"
+                )
             print()
-
-            candidates = await pipeline._process_sub_problem(sp_dict, spec_id)
-
-            if candidates:
-                print(f"  ✓ Judge 命中 {len(candidates)} 条轨迹:")
-                for c in candidates:
-                    for mp in c.matched_problems:
-                        print(f"    {c.trajectory_id}: "
-                              f"confidence={mp['confidence']:.2f}, "
-                              f"spans={mp['loss_mask_spans']}")
-            else:
-                if recalled:
-                    print("  ✗ 召回有结果但 Judge 全部 miss "
-                          f"(min_confidence={cfg.min_confidence})")
-                else:
-                    print("  ✗ 召回为空，无法进入 Judge")
-            print()
-
-            all_candidates.extend(candidates)
 
         # ── Final Output ─────────────────────────────────────────────────
-        _print_section("模块1: 最终 SFTCandidate")
+        _print_section("模块2/3: 软加分 + 去重覆盖优选")
 
-        if all_candidates:
-            # Merge by trajectory_id (same logic as pipeline.run)
-            merged: dict = {}
-            for c in all_candidates:
-                if c.trajectory_id in merged:
-                    merged[c.trajectory_id].matched_problems.extend(
-                        c.matched_problems
-                    )
-                else:
-                    merged[c.trajectory_id] = c
+        scored = await pipeline.run_scored(
+            trajectory_paths=[trajectories_path],
+            problem_specs=[spec_dict],
+        )
+        print(f"模块2 scored candidates: {len(scored)}")
+        for c in scored[:10]:
+            print(
+                f"  {c.trajectory_id}/slice{c.slice_index} "
+                f"sub={c.sub_problem_id} relevance={c.relevance_score:.4f} "
+                f"judge_conf={c.judge_confidence:.2f}"
+            )
 
-            print(f"共 {len(merged)} 条唯一轨迹命中:\n")
-            for c in merged.values():
-                print(f"  trajectory_id: {c.trajectory_id}")
-                print(f"  trajectory_path: {c.trajectory_path}")
-                for i, mp in enumerate(c.matched_problems):
-                    print(f"    match[{i}]: capability={mp['capability']}, "
-                          f"confidence={mp['confidence']:.2f}")
-                    print(f"             loss_mask_spans={mp['loss_mask_spans']}")
-                print()
+        result = select_final_dataset(
+            scored,
+            sub_problem_ids=[sp["id"] for sp in spec_dict["sub_problems"]],
+            selection=SelectionConfig(n=min(10, max(1, len(scored))), min_per_problem=1),
+            general=GeneralDataConfig(ratio=0.3, source_path=None),
+        )
+        targeted = result["targeted"]
+        if targeted:
+            print(f"\n最终 targeted: {len(targeted)}")
+            print(f"manifest: {json.dumps(result['manifest'], ensure_ascii=False)}\n")
+            for c in targeted:
+                print(
+                    f"  {c.trajectory_id}/slice{c.slice_index}: "
+                    f"sub={c.sub_problem_id}, relevance={c.relevance_score:.4f}, "
+                    f"spans={c.loss_mask_spans}"
+                )
         else:
-            print("⚠️  无任何 SFTCandidate 产出。")
+            print("⚠️  无任何 targeted candidate 产出。")
             print("   排查方向: 检查上方召回结果是否为空 → "
                   "若空则检查 filters/keywords 对齐；"
-                  "若有召回但 judge 全 miss 则检查 confidence 阈值。")
+                  "若有召回但得分低则检查 judge 与软加分结果。")
 
         # ── Stats ────────────────────────────────────────────────────────
         _print_section("Gateway 统计")

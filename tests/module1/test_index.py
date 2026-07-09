@@ -48,7 +48,7 @@ def test_filter_languages():
         query_embeddings=[],
         top_n=10,
     )
-    traj_ids = [r.trajectory_id for r in results]
+    traj_ids = [r.signature.trajectory_id for r in results]
     assert "t1" in traj_ids
     assert "t3" in traj_ids
     assert "t2" not in traj_ids
@@ -65,7 +65,7 @@ def test_filter_tools_used():
         query_embeddings=[],
         top_n=10,
     )
-    traj_ids = [r.trajectory_id for r in results]
+    traj_ids = [r.signature.trajectory_id for r in results]
     assert "t1" in traj_ids
     assert "t2" not in traj_ids
 
@@ -81,7 +81,7 @@ def test_filter_min_turns():
         query_embeddings=[],
         top_n=10,
     )
-    traj_ids = [r.trajectory_id for r in results]
+    traj_ids = [r.signature.trajectory_id for r in results]
     assert "t1" in traj_ids
     assert "t2" not in traj_ids
 
@@ -97,7 +97,7 @@ def test_filter_has_verification_step():
         query_embeddings=[],
         top_n=10,
     )
-    traj_ids = [r.trajectory_id for r in results]
+    traj_ids = [r.signature.trajectory_id for r in results]
     assert "t1" in traj_ids
     assert "t2" not in traj_ids
 
@@ -115,7 +115,7 @@ def test_bm25_recall():
         top_n=10,
     )
     # t1 should rank highest (both keywords match)
-    assert results[0].trajectory_id == "t1"
+    assert results[0].signature.trajectory_id == "t1"
 
 
 def test_vector_recall():
@@ -139,7 +139,21 @@ def test_vector_recall():
         query_embeddings=[emb_query.tolist()],
         top_n=2,
     )
-    assert results[0].trajectory_id == "t1"
+    assert results[0].signature.trajectory_id == "t1"
+
+
+def test_vector_recall_accepts_embeddings_with_zero_prefix():
+    idx = MemoryIndex()
+    query = [0.0] * 10 + [1.0] + [0.0] * 1013
+    idx.add(_make_sig("t2", embedding=[1.0] + [0.0] * 1023))
+    idx.add(_make_sig("t1", embedding=query))
+    results = idx.recall(
+        structured_filters={},
+        keywords=[],
+        query_embeddings=[query],
+        top_n=2,
+    )
+    assert results[0].signature.trajectory_id == "t1"
 
 
 def test_rrf_fusion():
@@ -160,7 +174,7 @@ def test_rrf_fusion():
         top_n=2,
     )
     # Both should appear (RRF merges both signals)
-    traj_ids = [r.trajectory_id for r in results]
+    traj_ids = [r.signature.trajectory_id for r in results]
     assert "t1" in traj_ids
     assert "t2" in traj_ids
 
@@ -228,9 +242,39 @@ def test_bm25_mixed_case_idf():
         top_n=3,
     )
     # t1 and t3 should both appear and rank above t2 (which has no matching tokens)
-    traj_ids = [r.trajectory_id for r in results]
+    traj_ids = [r.signature.trajectory_id for r in results]
     assert "t1" in traj_ids
     assert "t3" in traj_ids
     # t2 has no BM25 score so must rank below the matching docs
     assert traj_ids.index("t2") > traj_ids.index("t1")
     assert traj_ids.index("t2") > traj_ids.index("t3")
+
+
+def test_recall_returns_recall_hits_with_scores():
+    from module1.store import RecallHit
+
+    idx = MemoryIndex()
+    idx.add(_make_sig("t1", bm25_tokens=["syntaxerror", "python"]))
+    results = idx.recall(
+        structured_filters={},
+        keywords=["syntaxerror"],
+        query_embeddings=[],
+        top_n=5,
+    )
+    assert results
+    assert all(isinstance(r, RecallHit) for r in results)
+    assert all(r.rrf_score >= 0.0 for r in results)
+
+
+def test_update_labels_mutates_signature():
+    idx = MemoryIndex()
+    idx.add(_make_sig("t1", slice_idx=2))
+    idx.update_labels("t1", 2, ["valid_syntax_in_toolcall"])
+    hits = idx.recall(
+        structured_filters={},
+        keywords=["python"],
+        query_embeddings=[],
+        top_n=5,
+    )
+    match = [h for h in hits if h.signature.trajectory_id == "t1"][0]
+    assert match.signature.capability_labels == ["valid_syntax_in_toolcall"]

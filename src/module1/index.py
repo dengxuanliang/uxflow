@@ -23,7 +23,8 @@ from collections import Counter
 
 import numpy as np
 
-from module1.models import TrajectorySignature
+from module1.models import Slice, TrajectorySignature
+from module1.store import RecallHit
 
 __all__ = ["MemoryIndex"]
 
@@ -35,6 +36,7 @@ class MemoryIndex:
 
     def __init__(self):
         self._signatures: list[TrajectorySignature] = []
+        self._slice_source: dict[tuple[str, int], Slice] = {}
 
     @property
     def size(self) -> int:
@@ -53,7 +55,7 @@ class MemoryIndex:
         keywords: list[str],
         query_embeddings: list[list[float]],
         top_n: int = 20,
-    ) -> list[TrajectorySignature]:
+    ) -> list[RecallHit]:
         """Multi-path recall: filter → BM25 + vector → RRF → top-N.
 
         Args:
@@ -65,7 +67,7 @@ class MemoryIndex:
             top_n: max results to return.
 
         Returns:
-            Ranked list of TrajectorySignature, best first.
+            Ranked list of RecallHit, best first.
         """
         if not self._signatures:
             return []
@@ -85,7 +87,42 @@ class MemoryIndex:
         # Sort by fused score descending
         fused.sort(key=lambda x: x[1], reverse=True)
 
-        return [sig for sig, _score in fused[:top_n]]
+        return [
+            RecallHit(signature=sig, rrf_score=score)
+            for sig, score in fused[:top_n]
+        ]
+
+    def _get_signature(
+        self, trajectory_id: str, slice_index: int
+    ) -> TrajectorySignature | None:
+        for sig in self._signatures:
+            if sig.trajectory_id == trajectory_id and sig.slice_index == slice_index:
+                return sig
+        return None
+
+    def update_labels(
+        self, trajectory_id: str, slice_index: int, labels: list[str]
+    ) -> None:
+        """Attach capability labels on the matching signature."""
+        sig = self._get_signature(trajectory_id, slice_index)
+        if sig is not None:
+            sig.capability_labels = list(labels)
+
+    def set_slice_source(
+        self, trajectory_id: str, slice_index: int, slice_obj: Slice
+    ) -> None:
+        self._slice_source[(trajectory_id, slice_index)] = slice_obj
+
+    def get_slice(self, trajectory_id: str, slice_index: int) -> Slice | None:
+        """Return the source slice object for (trajectory_id, slice_index)."""
+        return self._slice_source.get((trajectory_id, slice_index))
+
+    def get_slice_obj(self, trajectory_id: str, slice_index: int) -> Slice | None:
+        return self.get_slice(trajectory_id, slice_index)
+
+    @property
+    def slice_source_count(self) -> int:
+        return len(self._slice_source)
 
     def _apply_filters(self, filters: dict) -> list[TrajectorySignature]:
         """Apply structured filters. None/missing values skip that filter."""
@@ -165,7 +202,7 @@ class MemoryIndex:
         cand_embs = []
         valid_indices = []
         for i, sig in enumerate(candidates):
-            if sig.embedding and any(v != 0.0 for v in sig.embedding[:10]):
+            if sig.embedding and any(v != 0.0 for v in sig.embedding):
                 cand_embs.append(sig.embedding)
                 valid_indices.append(i)
 

@@ -113,7 +113,7 @@ async def test_pipeline_rerun_no_accumulation(trajectories_path, problem_spec_di
     second = await pipeline.run(trajectory_paths=[trajectories_path], problem_specs=[problem_spec_dict])
 
     assert len(second) == len(first)
-    assert pipeline._index.size == len(pipeline._slice_map)
+    assert pipeline._store.size == pipeline._store.slice_source_count
 
 
 async def test_pipeline_multiple_specs(trajectories_path):
@@ -202,3 +202,22 @@ async def test_pipeline_output_format(trajectories_path, problem_spec_dict):
             assert "capability" in mp
             assert "confidence" in mp
             assert "loss_mask_spans" in mp
+
+
+async def test_run_scored_soft_scoring(trajectories_path, problem_spec_dict):
+    """run_scored keeps recalled slices as scored slice-level candidates."""
+    from module2.models import ScoredCandidate
+
+    judge_resp = '[{"match": true, "confidence": 0.9, "spans": [{"start_step": 0, "end_step": 3}], "reasoning": "ok"}]'
+    gw = FakeGateway([judge_resp] * 50)
+    cfg = PipelineConfig(judge_model="test-model", recall_top_n=5)
+    pipeline = TrajectoryPipeline(config=cfg, gateway=gw)
+
+    scored = await pipeline.run_scored(
+        trajectory_paths=[trajectories_path],
+        problem_specs=[problem_spec_dict],
+    )
+    assert all(isinstance(s, ScoredCandidate) for s in scored)
+    assert scored
+    assert all(s.relevance_score >= 0.0 for s in scored)
+    assert scored == sorted(scored, key=lambda s: s.relevance_score, reverse=True)

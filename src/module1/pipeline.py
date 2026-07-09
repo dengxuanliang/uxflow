@@ -7,14 +7,16 @@ for each ProblemSpec sub_problem: recall → judge → collect SFTCandidates.
 from __future__ import annotations
 
 import pathlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from module1.models import SFTCandidate, Slice, TrajectorySignature
+from module1.models import SFTCandidate
 from module1.loader import load_trajectories
 from module1.slicer import slice_trajectory
 from module1.signature import extract_signature
 from module1.index import MemoryIndex
 from module1.judge import Judge
+from module2.models import ScoredCandidate
+from module2.rerank import rerank
 
 __all__ = ["TrajectoryPipeline", "PipelineConfig"]
 
@@ -41,14 +43,12 @@ class TrajectoryPipeline:
     def __init__(self, config: PipelineConfig, gateway):
         self._config = config
         self._gateway = gateway
-        self._index = MemoryIndex()
+        self._store = MemoryIndex()
         self._judge = Judge(
             gateway=gateway,
             model=config.judge_model,
             batch_size=config.judge_batch_size,
         )
-        # Mapping: (trajectory_id, slice_index) → Slice object
-        self._slice_map: dict[tuple[str, int], Slice] = {}
         # Mapping: trajectory_id → source file path
         self._traj_paths: dict[str, str] = {}
 
@@ -68,14 +68,13 @@ class TrajectoryPipeline:
             List of SFTCandidate objects.
         """
         # Reset per-run state so reusing a pipeline instance doesn't accumulate.
-        self._index = MemoryIndex()
-        self._slice_map.clear()
+        self._store = MemoryIndex()
         self._traj_paths.clear()
 
         # Phase 1: Load + Slice + Sign + Index
         self._build_index(trajectory_paths)
 
-        if self._index.size == 0:
+        if self._store.size == 0:
             return []
 
         # Phase 2: For each sub_problem in each spec: recall + judge
@@ -98,6 +97,27 @@ class TrajectoryPipeline:
 
         return list(all_candidates.values())
 
+    async def run_scored(
+        self,
+        *,
+        trajectory_paths: list[str | pathlib.Path],
+        problem_specs: list[dict],
+    ) -> list[ScoredCandidate]:
+        """Module 1→2 entry: recall, judge, and soft-score slice candidates."""
+        self._store = MemoryIndex()
+        self._traj_paths.clear()
+        self._build_index(trajectory_paths)
+        if self._store.size == 0:
+            return []
+
+        all_scored: list[ScoredCandidate] = []
+        for spec in problem_specs:
+            for sp in spec.get("sub_problems", []):
+                all_scored.extend(await self._score_sub_problem(sp))
+
+        all_scored.sort(key=lambda c: c.relevance_score, reverse=True)
+        return all_scored
+
     def _build_index(self, trajectory_paths: list[str | pathlib.Path]) -> None:
         """Load trajectories, slice, extract signatures, build index."""
         for path in trajectory_paths:
@@ -112,8 +132,8 @@ class TrajectoryPipeline:
                     sig = extract_signature(
                         sl, embedding_model=self._config.embedding_model
                     )
-                    self._index.add(sig)
-                    self._slice_map[(sl.trajectory_id, sl.slice_index)] = sl
+                    self._store.add(sig)
+                    self._store.set_slice_source(sl.trajectory_id, sl.slice_index, sl)
 
     async def _process_sub_problem(
         self, sub_problem: dict, spec_id: str
@@ -132,22 +152,24 @@ class TrajectoryPipeline:
             query_embeddings = self._config.embedding_model.embed_batch(hyde_positive)
 
         # Recall
-        recalled_sigs = self._index.recall(
+        recalled_hits = self._store.recall(
             structured_filters=structured_filters,
             keywords=keywords,
             query_embeddings=query_embeddings,
             top_n=self._config.recall_top_n,
         )
 
-        if not recalled_sigs:
+        if not recalled_hits:
             return []
 
         # Map signatures back to slices
         recalled_slices = []
-        for sig in recalled_sigs:
-            key = (sig.trajectory_id, sig.slice_index)
-            if key in self._slice_map:
-                recalled_slices.append(self._slice_map[key])
+        for hit in recalled_hits:
+            sl = self._store.get_slice(
+                hit.signature.trajectory_id, hit.signature.slice_index
+            )
+            if sl is not None:
+                recalled_slices.append(sl)
 
         if not recalled_slices:
             return []
@@ -176,3 +198,54 @@ class TrajectoryPipeline:
                 ))
 
         return candidates
+
+    async def _score_sub_problem(self, sub_problem: dict) -> list[ScoredCandidate]:
+        structured_filters = sub_problem.get("structured_filters", {})
+        keywords = sub_problem.get("keywords", [])
+        hyde_positive = sub_problem.get("hyde_positive", [])
+        target_capability = sub_problem.get("target_capability", [])
+        trajectory_signal = sub_problem.get("trajectory_signal", "")
+
+        query_embeddings = []
+        if self._config.embedding_model and hyde_positive:
+            query_embeddings = self._config.embedding_model.embed_batch(hyde_positive)
+
+        hits = self._store.recall(
+            structured_filters=structured_filters,
+            keywords=keywords,
+            query_embeddings=query_embeddings,
+            top_n=self._config.recall_top_n,
+        )
+        if not hits:
+            return []
+
+        kept_hits = []
+        slices = []
+        for hit in hits:
+            sl = self._store.get_slice(
+                hit.signature.trajectory_id, hit.signature.slice_index
+            )
+            if sl is not None:
+                kept_hits.append(hit)
+                slices.append(sl)
+        if not slices:
+            return []
+
+        judge_results = await self._judge.judge_batch(
+            slices=slices,
+            target_capability=target_capability,
+            trajectory_signal=trajectory_signal,
+        )
+
+        for hit, jr in zip(kept_hits, judge_results):
+            if jr.match:
+                self._store.update_labels(
+                    hit.signature.trajectory_id,
+                    hit.signature.slice_index,
+                    target_capability,
+                )
+
+        scored = rerank(kept_hits, judge_results, sub_problem, trajectory_path="")
+        for sc in scored:
+            sc.trajectory_path = self._traj_paths.get(sc.trajectory_id, "")
+        return scored

@@ -47,6 +47,13 @@ _BM25_ERROR_TOKENS = re.compile(
     r"AttributeError|RuntimeError|FileNotFoundError|"
     r"Traceback|Exception|FAILED|Error|panic)"
 )
+_PATH_TOKEN = re.compile(r"\b[\w./-]+\.(?:py|js|ts|json|yaml|yml|md)\b")
+_PY_DEF_TOKEN = re.compile(r"\bdef\s+([A-Za-z_][A-Za-z0-9_]*)")
+_IDENT_TOKEN = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{2,}\b")
+_STOP_IDENTIFIERS = {
+    "def", "return", "class", "import", "from", "with", "open", "self",
+    "true", "false", "none", "syntaxerror", "traceback", "error",
+}
 
 
 def extract_signature(
@@ -121,9 +128,19 @@ def _extract_bm25_tokens(steps: list[Step], tools_used: list[str]) -> list[str]:
         tokens.add(t.lower())
     # Extract error keywords from tool results
     for s in steps:
-        text = s.tool_result or s.content or ""
+        text = " ".join(
+            part for part in (s.tool_call_args, s.tool_result, s.content) if part
+        )
         for match in _BM25_ERROR_TOKENS.finditer(text):
             tokens.add(match.group(0))
+        for match in _PATH_TOKEN.finditer(text):
+            tokens.add(match.group(0))
+        for match in _PY_DEF_TOKEN.finditer(text):
+            tokens.add(match.group(1))
+        for match in _IDENT_TOKEN.finditer(text):
+            ident = match.group(0)
+            if ident.lower() not in _STOP_IDENTIFIERS:
+                tokens.add(ident)
     return sorted(tokens)
 
 
@@ -131,8 +148,12 @@ def _build_summary_for_embedding(steps: list[Step]) -> str:
     """Build a short text summary for embedding."""
     parts = []
     for s in steps:
+        if s.tool_call_args:
+            parts.append(s.tool_call_args[:160])
         if s.role == "assistant" and s.content:
             parts.append(s.content[:100])
+            if s.tool_call_name:
+                parts.append(s.tool_call_name)
         elif s.role == "tool" and s.tool_result:
             parts.append(s.tool_result[:50])
-    return " ".join(parts)[:500]
+    return " ".join(parts)[:1000]
