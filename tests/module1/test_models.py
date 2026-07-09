@@ -39,3 +39,16 @@ def test_sft_candidate():
         }],
     )
     assert c.trajectory_id == "traj_001"
+
+
+def test_signature_capability_labels_defaults_none():
+    from module1.models import TrajectorySignature
+    sig = TrajectorySignature(
+        trajectory_id="t1", slice_index=0, step_range=(0, 5), step_count=6,
+        turn_count=1, languages=["python"], tools_used=["Bash"],
+        has_error_pattern=False, has_success_pattern=True,
+        has_verification_step=False, bm25_tokens=["python"],
+    )
+    assert sig.capability_labels is None
+    sig.capability_labels = ["valid_syntax_in_toolcall"]
+    assert sig.capability_labels == ["valid_syntax_in_toolcall"]
