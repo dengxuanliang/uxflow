@@ -75,10 +75,14 @@ async def test_pipeline_end_to_end(trajectories_path, problem_spec_dict):
         problem_specs=[problem_spec_dict],
     )
 
-    # Should produce at least one SFTCandidate
-    assert len(candidates) >= 0  # May be 0 if recall filters don't match fixture
-    # Gateway was called (judge was invoked)
-    assert len(gw.calls) >= 0
+    # Judge mock returns match=true → must produce at least one candidate with spans
+    assert len(candidates) >= 1
+    assert all(c.matched_problems for c in candidates)
+    assert any(
+        mp["loss_mask_spans"]
+        for c in candidates for mp in c.matched_problems
+    )
+    assert len(gw.calls) >= 1
 
 
 async def test_pipeline_no_match(trajectories_path, problem_spec_dict):
@@ -94,10 +98,22 @@ async def test_pipeline_no_match(trajectories_path, problem_spec_dict):
         problem_specs=[problem_spec_dict],
     )
 
-    # All judge calls returned no-match → no candidates
-    for c in candidates:
-        # If any candidates exist, they must have matched_problems
-        assert len(c.matched_problems) > 0
+    # All judge calls returned no-match → zero candidates
+    assert candidates == []
+
+
+async def test_pipeline_rerun_no_accumulation(trajectories_path, problem_spec_dict):
+    """Reusing a pipeline instance across runs must not accumulate index state."""
+    judge_resp = '[{"match": true, "confidence": 0.9, "spans": [{"start_step": 0, "end_step": 3}], "reasoning": "ok"}]'
+    gw = FakeGateway([judge_resp] * 50)
+    cfg = PipelineConfig(judge_model="test-model", recall_top_n=5)
+    pipeline = TrajectoryPipeline(config=cfg, gateway=gw)
+
+    first = await pipeline.run(trajectory_paths=[trajectories_path], problem_specs=[problem_spec_dict])
+    second = await pipeline.run(trajectory_paths=[trajectories_path], problem_specs=[problem_spec_dict])
+
+    assert len(second) == len(first)
+    assert pipeline._index.size == len(pipeline._slice_map)
 
 
 async def test_pipeline_multiple_specs(trajectories_path):

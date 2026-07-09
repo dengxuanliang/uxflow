@@ -133,7 +133,7 @@ def _parse_judge_response(raw: str | None, n_expected: int) -> list[JudgeResult]
                 results.append(JudgeResult(
                     match=bool(match_val),
                     confidence=float(item.get("confidence", 0.0)),
-                    spans=item.get("spans") if isinstance(item.get("spans"), list) else [],
+                    spans=_clean_spans(item.get("spans")),
                     reasoning=str(item.get("reasoning", "")),
                 ))
             except (ValueError, TypeError):
@@ -145,6 +145,25 @@ def _parse_judge_response(raw: str | None, n_expected: int) -> list[JudgeResult]
                 match=False, confidence=0.0, spans=[], reasoning="missing_in_response"
             ))
     return results
+
+
+def _clean_spans(raw) -> list[dict]:
+    """Keep only well-formed spans: int start/end with start <= end."""
+    if not isinstance(raw, list):
+        return []
+    cleaned = []
+    for s in raw:
+        if not isinstance(s, dict):
+            continue
+        start, end = s.get("start_step"), s.get("end_step")
+        if isinstance(start, bool) or isinstance(end, bool):
+            continue  # bool is a subclass of int; reject explicitly
+        if not (isinstance(start, int) and isinstance(end, int)):
+            continue
+        if start > end:
+            continue
+        cleaned.append({"start_step": start, "end_step": end})
+    return cleaned
 
 
 def _extract_json(text: str) -> str:

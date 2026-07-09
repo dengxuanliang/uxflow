@@ -67,6 +67,11 @@ class TrajectoryPipeline:
         Returns:
             List of SFTCandidate objects.
         """
+        # Reset per-run state so reusing a pipeline instance doesn't accumulate.
+        self._index = MemoryIndex()
+        self._slice_map.clear()
+        self._traj_paths.clear()
+
         # Phase 1: Load + Slice + Sign + Index
         self._build_index(trajectory_paths)
 

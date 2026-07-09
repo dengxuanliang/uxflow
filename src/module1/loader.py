@@ -1,6 +1,7 @@
 """Load and parse trajectories from JSONL."""
 
 from __future__ import annotations
+import hashlib
 import json
 import pathlib
 from module1.models import Step, Trajectory
@@ -23,7 +24,10 @@ def load_trajectories(path: str | pathlib.Path) -> list[Trajectory]:
 
 
 def parse_trajectory(data: dict) -> Trajectory:
-    traj_id = data.get("id", f"traj_{hash(json.dumps(data, sort_keys=True)) % 10**8}")
+    traj_id = data.get(
+        "id",
+        f"traj_{hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()[:16]}",
+    )
     messages = data.get("messages", [])
     steps = []
     step_idx = 0

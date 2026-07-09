@@ -3,6 +3,12 @@
 V1 strategy: in-memory list + numpy. No ES/Qdrant dependency.
 Scales to ~10k signatures. For millions, swap to ES+Qdrant (same interface).
 
+NOTE: When migrating to a persistent index, query and stored vectors are no
+longer guaranteed to be same-source. Validate embedding dimension at
+add/load time (fail-loud on cross-dim mixing) and skip mismatched query
+vectors in _vector_score. Not needed for V1: vectors are computed on the fly
+from a single EmbeddingModel, so query and index dimensions always match.
+
 Recall pipeline:
   1. Structured filters (languages, tools_used, min_turns, has_verification_step)
   2. BM25 scoring (TF-IDF on bm25_tokens)
