@@ -1,5 +1,5 @@
 from module1.models import Step, Slice
-from module1.signature import extract_signature
+from module1.signature import _build_summary_for_embedding, extract_signature
 
 
 def _make_slice(steps):
@@ -70,6 +70,29 @@ def test_bm25_tokens():
     ]
     sig = extract_signature(_make_slice(steps))
     assert "SyntaxError" in sig.bm25_tokens or "syntaxerror" in sig.bm25_tokens
+
+
+def test_bm25_tokens_include_code_identifiers_and_paths_for_dedup():
+    steps = [
+        Step(index=0, role="assistant", content="fix parser",
+             tool_call_name="Read", tool_call_args='{"file_path": "src/parser.py"}'),
+        Step(index=1, role="tool", content="def parse_user(path)\nSyntaxError: expected ':'",
+             tool_result="def parse_user(path)\nSyntaxError: expected ':'"),
+    ]
+    sig = extract_signature(_make_slice(steps))
+    assert "src/parser.py" in sig.bm25_tokens
+    assert "parse_user" in sig.bm25_tokens
+
+
+def test_embedding_summary_includes_tool_call_args():
+    steps = [
+        Step(index=0, role="assistant", content="read file",
+             tool_call_name="Read", tool_call_args='{"file_path": "src/parser.py"}'),
+        Step(index=1, role="tool", content="def parse_user(path)",
+             tool_result="def parse_user(path)"),
+    ]
+    summary = _build_summary_for_embedding(steps)
+    assert "src/parser.py" in summary
 
 
 def test_turn_count():

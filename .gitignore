@@ -14,6 +14,8 @@ venv/
 uv.lock
 .DS_Store
 .claude/
+docs/superpowers/reports/
+SWE轨迹优选器设计.md
 
 # Large binary tool (re-downloadable from plantuml.com)
 plantuml.jar

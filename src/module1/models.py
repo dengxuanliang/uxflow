@@ -54,6 +54,7 @@ class TrajectorySignature:
     has_verification_step: bool
     bm25_tokens: list[str]
     embedding: list[float] = field(default_factory=list)
+    capability_labels: list[str] | None = None
 
 
 @dataclass
