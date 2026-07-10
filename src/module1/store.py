@@ -35,6 +35,10 @@ class SliceStore(Protocol):
 
     def get_slice(self, trajectory_id: str, slice_index: int) -> Slice | None: ...
 
+    def set_slice_source(
+        self, trajectory_id: str, slice_index: int, slice_obj: Slice
+    ) -> None: ...
+
     def update_labels(
         self, trajectory_id: str, slice_index: int, labels: list[str]
     ) -> None: ...

@@ -26,7 +26,7 @@ def test_recall_hit_carries_signature_and_score():
 
 
 def test_slicestore_is_runtime_checkable_protocol():
-    for name in ("add_batch", "recall", "get_slice", "update_labels"):
+    for name in ("add_batch", "recall", "get_slice", "set_slice_source", "update_labels"):
         assert hasattr(SliceStore, name)
 
 
