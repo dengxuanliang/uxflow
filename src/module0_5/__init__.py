@@ -4,5 +4,6 @@
 
 from module0_5.models import LabelProposal, BackfillResult
 from module0_5.evolution import resolve_proposal, ProposalResolution, ingest_proposal
+from module0_5.inheritance import rerank_with_inheritance
 
-__all__ = ["LabelProposal", "BackfillResult", "resolve_proposal", "ProposalResolution", "ingest_proposal"]
+__all__ = ["LabelProposal", "BackfillResult", "resolve_proposal", "ProposalResolution", "ingest_proposal", "rerank_with_inheritance"]
