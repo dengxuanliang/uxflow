@@ -85,8 +85,8 @@ description = "SWE trajectory selector for SFT dataset curation"
 requires-python = ">=3.11"
 license = "Apache-2.0"
 readme = "README.md"
-authors = [{name = "..."}]
-urls = {Repository = "https://github.com/<user>/UXFlow", Issues = ".../issues"}
+authors = [{name = "dengxuanliang"}]
+urls = {Repository = "https://github.com/dengxuanliang/uxflow", Issues = "https://github.com/dengxuanliang/uxflow/issues"}
 ```
 
 `llm_gateway` 作为子模块保留（`src/llm_gateway/` 物理目录不改，避免大量 import 改动）；仅改分发包名与品牌。
@@ -214,9 +214,13 @@ steps:
 
 ---
 
-## 10. 需评审确认的开放点
+## 10. 开放点处置（已确认）
 
-1. **`ApiEmbedder` provider 格式**：默认 OpenAI 兼容（Qwen API 亦支持）；若主用某特定 provider 可指定。
-2. **README/CONTRIBUTING 语言**：默认英文为主；是否需中英双语。
-3. **`llm_gateway` 物理目录**：默认不改（仅改分发包名）；若要品牌彻底统一需重命名目录（爆炸半径大）。
-4. **作者/仓库 URL 占位**：`authors`、`urls` 的具体值待你提供。
+1. **`ApiEmbedder` provider 格式**：**OpenAI 兼容**（`/v1/embeddings` 格式；Qwen API / vLLM / Ollama 等大多兼容，一个实现覆盖多数 provider）。
+2. **README/CONTRIBUTING 语言**：**中英双语**（`README.md` 英文 + `README.zh-CN.md` 中文；CONTRIBUTING 同理）。
+3. **`llm_gateway` 物理目录**：**不重命名**，仅改分发包名为 uxflow（零 import 改动）。
+4. **项目元数据（真实值）**：
+   - 作者署名：`dengxuanliang`
+   - 仓库 URL：`https://github.com/dengxuanliang/uxflow`
+   - Apache 许可证头版权行：`Copyright 2026 dengxuanliang`
+   - `pyproject.toml`：`authors = [{name = "dengxuanliang"}]`，`urls = {Repository = "https://github.com/dengxuanliang/uxflow", Issues = "https://github.com/dengxuanliang/uxflow/issues"}`
