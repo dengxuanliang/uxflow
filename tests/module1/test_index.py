@@ -278,3 +278,24 @@ def test_update_labels_mutates_signature():
     )
     match = [h for h in hits if h.signature.trajectory_id == "t1"][0]
     assert match.signature.capability_labels == ["valid_syntax_in_toolcall"]
+
+
+def test_update_labels_merges_without_reordering_existing_labels():
+    idx = MemoryIndex()
+    idx.add(_make_sig("t1", slice_idx=2))
+
+    idx.update_labels("t1", 2, ["valid_syntax_in_toolcall", "pytest_verification"])
+    idx.update_labels("t1", 2, ["pytest_verification", "edit_after_error"])
+
+    hits = idx.recall(
+        structured_filters={},
+        keywords=["python"],
+        query_embeddings=[],
+        top_n=5,
+    )
+    match = [h for h in hits if h.signature.trajectory_id == "t1"][0]
+    assert match.signature.capability_labels == [
+        "valid_syntax_in_toolcall",
+        "pytest_verification",
+        "edit_after_error",
+    ]

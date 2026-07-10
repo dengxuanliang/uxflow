@@ -106,7 +106,8 @@ class MemoryIndex:
         """Attach capability labels on the matching signature."""
         sig = self._get_signature(trajectory_id, slice_index)
         if sig is not None:
-            sig.capability_labels = list(labels)
+            existing = sig.capability_labels or []
+            sig.capability_labels = list(dict.fromkeys([*existing, *labels]))
 
     def set_slice_source(
         self, trajectory_id: str, slice_index: int, slice_obj: Slice

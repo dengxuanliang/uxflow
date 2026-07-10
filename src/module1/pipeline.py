@@ -58,7 +58,11 @@ class TrajectoryPipeline:
         trajectory_paths: list[str | pathlib.Path],
         problem_specs: list[dict],
     ) -> list[SFTCandidate]:
-        """Execute the full pipeline.
+        """Execute the legacy Module 1 pipeline.
+
+        This preserves the original SFTCandidate contract and hard-filters
+        judge misses. Use run_scored() for the Module 1→2 soft-scoring entry
+        consumed by Module 3 selection.
 
         Args:
             trajectory_paths: paths to JSONL trajectory files.
@@ -103,7 +107,12 @@ class TrajectoryPipeline:
         trajectory_paths: list[str | pathlib.Path],
         problem_specs: list[dict],
     ) -> list[ScoredCandidate]:
-        """Module 1→2 entry: recall, judge, and soft-score slice candidates."""
+        """Module 1→2 entry: recall, judge, and soft-score slice candidates.
+
+        Unlike run(), this keeps judge misses as decayed ScoredCandidates so
+        Module 2 ranking can preserve recall evidence before Module 3 selects
+        the final trainable dataset.
+        """
         self._store = MemoryIndex()
         self._traj_paths.clear()
         self._build_index(trajectory_paths)
