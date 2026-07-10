@@ -17,6 +17,11 @@ import pathlib
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
 
+# Default the local embedding model to offline: the model is expected to be
+# cached locally for this script, and the HF metadata check can stall on a
+# flaky network. Users can override by exporting HF_HUB_OFFLINE=0.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 from llm_gateway import LLMGateway, GatewayConfig  # noqa: E402  (import after load_dotenv)
 from module0 import QueryCompiler, Taxonomy  # noqa: E402
 from module0.embedding import EmbeddingModel  # noqa: E402
@@ -72,7 +77,8 @@ async def main():
     root = pathlib.Path(__file__).parent.parent
 
     taxonomy_path = root / "fixtures" / "taxonomy_v0.json"
-    trajectories_path = root / "fixtures" / "trajectories" / "sample_01.jsonl"
+    traj_name = sys.argv[2] if len(sys.argv) > 2 else "sample_01.jsonl"
+    trajectories_path = root / "fixtures" / "trajectories" / traj_name
 
     # ── 1. Load embedding model ──────────────────────────────────────────
     print("⏳ 加载 embedding 模型 (Qwen3-Embedding-0.6B)...")
