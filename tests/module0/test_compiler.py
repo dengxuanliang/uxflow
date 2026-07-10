@@ -256,3 +256,8 @@ async def test_i1_dropped_records_reset_per_compile(taxonomy):
     compiler._gateway = gw2
     await compiler.compile("环境问题")
     assert len(compiler.dropped_records) == 0  # reset, not accumulated
+
+
+def test_compile_error_is_importable_and_is_exception():
+    from module0 import CompileError
+    assert issubclass(CompileError, Exception)

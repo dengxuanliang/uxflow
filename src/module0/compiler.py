@@ -34,9 +34,26 @@ from module0.schema import (
 )
 from module0.taxonomy import Taxonomy
 
-__all__ = ["QueryCompiler"]
+__all__ = ["QueryCompiler", "CompileError"]
 
 _PASS_THRESHOLD = 0.8  # spec Part 6 分流规则
+
+
+class CompileError(Exception):
+    """Raised when compilation cannot proceed (Call 1 failed after retries)."""
+
+
+class RetryableParseError(Exception):
+    """Internal signal: this step should be retried (empty response)."""
+
+
+class _StepFailed(Exception):
+    """Internal: a step exhausted its retries. Caught by compile() to degrade."""
+
+    def __init__(self, step_name: str, last_error):
+        self.step_name = step_name
+        self.last_error = last_error
+        super().__init__(f"{step_name} failed after retries: {last_error}")
 
 
 class QueryCompiler:
