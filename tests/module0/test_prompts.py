@@ -58,3 +58,19 @@ def test_call2_output_schema_mentioned():
     system = msgs[0]["content"]
     for field in ["target_capability", "trajectory_signal", "hyde_positive", "keywords", "confidence", "route"]:
         assert field in system, f"Missing field '{field}' in Call 2 system prompt"
+
+
+def test_call2_prompt_has_label_proposals_slot(taxonomy_v0_path):
+    taxonomy = Taxonomy.load(taxonomy_v0_path)
+    msgs = build_call2_messages(
+        [{"id": "p1", "raw_text": "x", "failure_summary": "y"}], taxonomy)
+    system = msgs[0]["content"]
+    assert "label_proposals" in system
+
+
+def test_call2_empty_taxonomy_prompt_has_label_proposals_slot():
+    empty = Taxonomy(version="0.1.0", updated_at="", labels=[])
+    msgs = build_call2_messages(
+        [{"id": "p1", "raw_text": "x", "failure_summary": "y"}], empty)
+    system = msgs[0]["content"]
+    assert "label_proposals" in system

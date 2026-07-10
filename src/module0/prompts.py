@@ -64,7 +64,7 @@ _CALL2_SYSTEM_WITH_TAXONOMY = """你是一个 SWE 问题分析专家。对每个
 ## 你可用的能力标签词表
 {taxonomy_injection}
 
-优先从上述词表选取标签（1-3个）。确无匹配才提议新标签（小写英文+下划线，动宾结构，描述"正确做法"，附 description + parent 建议，标 taxonomy_extension: true）。
+优先从上述词表选取标签（1-3个）。确无匹配才提议新标签（小写英文+下划线，动宾结构，描述"正确做法"，附 description + parent 建议，标 taxonomy_extension: true）。提议新标签时，除在 target_capability 用该标签名外，必须在 label_proposals 数组补齐 {{label, description, parent, keywords, taxonomy_extension:true}}；无新提议则省略该字段或给空数组。
 
 ## 结构化过滤条件 structured_filters
 字段（全部可选，无则设 null）：
@@ -85,7 +85,8 @@ _CALL2_SYSTEM_WITH_TAXONOMY = """你是一个 SWE 问题分析专家。对每个
   "structured_filters": {{"languages": ["python"], "min_turns": 3, ...}},
   "confidence": 0.0-1.0,
   "route": "pass" 或 "drop",
-  "drop_reason": "ambiguous|not_applicable|label_diverged|other（仅 route==drop 时填）"
+  "drop_reason": "ambiguous|not_applicable|label_diverged|other（仅 route==drop 时填）",
+  "label_proposals": [{{"label": "new_label", "description": "一句话中文", "parent": "父建议或null", "keywords": ["kw1"], "taxonomy_extension": true}}]
 }}
 ```
 
@@ -132,6 +133,7 @@ _CALL2_SYSTEM_EMPTY_TAXONOMY = """你是一个 SWE 问题分析专家。对每�
 - 命名规则：小写英文+下划线，动宾结构，描述"正确做法"
 - 每个标签附：description（一句话中文）、parent 建议（无则 null）
 - 标 taxonomy_extension: true
+- 提议新标签时，除在 target_capability 用该标签名外，必须在 label_proposals 数组补齐 {{label, description, parent, keywords, taxonomy_extension:true}}；无新提议则省略该字段或给空数组。
 
 ## 结构化过滤条件 structured_filters
 字段（全部可选，无则设 null）：
@@ -152,7 +154,8 @@ _CALL2_SYSTEM_EMPTY_TAXONOMY = """你是一个 SWE 问题分析专家。对每�
   "structured_filters": {{"languages": ["python"], "min_turns": 3, ...}},
   "confidence": 0.0-1.0,
   "route": "pass" 或 "drop",
-  "drop_reason": "ambiguous|not_applicable|label_diverged|other（仅 route==drop 时填）"
+  "drop_reason": "ambiguous|not_applicable|label_diverged|other（仅 route==drop 时填）",
+  "label_proposals": [{{"label": "new_label", "description": "一句话中文", "parent": "父建议或null", "keywords": ["kw1"], "taxonomy_extension": true}}]
 }}
 ```
 
