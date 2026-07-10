@@ -53,3 +53,42 @@ def test_thresholds_are_configurable():
     prop = _proposal([0.9, 0.1, 0.0])
     res = resolve_proposal(prop, _labels(), dedup_threshold=1.0)
     assert res.kind != "duplicate"
+
+
+from module0.taxonomy import TaxonomyStore, Taxonomy
+from module0_5.evolution import ingest_proposal
+
+
+def _store():
+    tax = Taxonomy(version="0.1.0", updated_at="2026-01-01T00:00:00Z", labels=_labels())
+    return TaxonomyStore(tax)
+
+
+def test_ingest_new_leaf_adds_to_store():
+    store = _store()
+    prop = _proposal([0.7, 0.7, 0.2])  # new_leaf under error_recovery (mount zone, not dup)
+    res = ingest_proposal(prop, store, created_at="2026-07-10T00:00:00Z")
+    assert res.kind == "new_leaf"
+    added = store.snapshot().get("new_leaf")
+    assert added is not None
+    assert added.parent == "error_recovery"
+    assert added.taxonomy_extension is True
+    assert added.created_at == "2026-07-10T00:00:00Z"
+
+
+def test_ingest_duplicate_does_not_add():
+    store = _store()
+    before = len(store.existing_labels())
+    prop = _proposal([0.9, 0.1, 0.0])  # duplicate of effective_error_fix
+    res = ingest_proposal(prop, store, created_at="2026-07-10T00:00:00Z")
+    assert res.kind == "duplicate"
+    assert len(store.existing_labels()) == before  # not added
+
+
+def test_ingest_new_root_sets_new_root_flag():
+    store = _store()
+    prop = _proposal([0.0, 0.0, 1.0])  # new_root (orthogonal)
+    res = ingest_proposal(prop, store, created_at="2026-07-10T00:00:00Z")
+    added = store.snapshot().get("new_leaf")  # proposal.label is "new_leaf"
+    assert added.new_root is True
+    assert added.parent is None

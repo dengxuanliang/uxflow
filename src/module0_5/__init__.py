@@ -3,6 +3,6 @@
 # Copyright 2026 dengxuanliang
 
 from module0_5.models import LabelProposal, BackfillResult
-from module0_5.evolution import resolve_proposal, ProposalResolution
+from module0_5.evolution import resolve_proposal, ProposalResolution, ingest_proposal
 
-__all__ = ["LabelProposal", "BackfillResult", "resolve_proposal", "ProposalResolution"]
+__all__ = ["LabelProposal", "BackfillResult", "resolve_proposal", "ProposalResolution", "ingest_proposal"]

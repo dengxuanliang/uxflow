@@ -9,10 +9,10 @@ from typing import Literal
 
 import numpy as np
 
-from module0.taxonomy import TaxonomyLabel
+from module0.taxonomy import TaxonomyLabel, TaxonomyStore
 from module0_5.models import LabelProposal
 
-__all__ = ["resolve_proposal", "ProposalResolution"]
+__all__ = ["resolve_proposal", "ProposalResolution", "ingest_proposal"]
 
 
 @dataclass
@@ -65,3 +65,31 @@ def resolve_proposal(
         return ProposalResolution(kind="new_leaf", parent=best_root.label, new_root=False)
 
     return ProposalResolution(kind="new_root", parent=None, new_root=True)
+
+
+def ingest_proposal(
+    proposal: LabelProposal,
+    store: TaxonomyStore,
+    *,
+    created_at: str,
+    dedup_threshold: float = 0.85,
+    mount_threshold: float = 0.60,
+) -> ProposalResolution:
+    """判定 + 写入。duplicate 丢弃不入库；new_leaf/new_root 转 TaxonomyLabel 入库。"""
+    res = resolve_proposal(
+        proposal, store.existing_labels(),
+        dedup_threshold=dedup_threshold, mount_threshold=mount_threshold,
+    )
+    if res.kind == "duplicate":
+        return res  # 丢弃不回填（决策）
+    store.add_label(TaxonomyLabel(
+        label=proposal.label,
+        parent=res.parent,
+        new_root=res.new_root,
+        description=proposal.description,
+        keywords=proposal.keywords,
+        description_embedding=proposal.description_embedding,
+        taxonomy_extension=True,
+        created_at=created_at,
+    ))
+    return res
