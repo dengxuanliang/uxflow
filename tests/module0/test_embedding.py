@@ -13,7 +13,10 @@ try:
 except ImportError:
     HAS_DEPS = False
 
-pytestmark = pytest.mark.skipif(not HAS_DEPS, reason="sentence-transformers/torch not installed")
+pytestmark = [
+    pytest.mark.requires_model,
+    pytest.mark.skipif(not HAS_DEPS, reason="sentence-transformers/torch not installed"),
+]
 
 
 @pytest.fixture(scope="module")

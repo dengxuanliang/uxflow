@@ -27,3 +27,6 @@ packages = ["src/llm_gateway", "src/module0", "src/module1", "src/module2", "src
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "requires_model: needs local Qwen model + torch (skipped in CI)",
+]

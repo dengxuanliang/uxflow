@@ -70,6 +70,7 @@ async def test_end_to_end_ambiguous(taxonomy):
                 assert sp.parent_id is not None
 
 
+@pytest.mark.requires_model
 async def test_embedding_integration(taxonomy):
     """Real LLM + real embedding model end-to-end."""
     from module0.embedding import EmbeddingModel
