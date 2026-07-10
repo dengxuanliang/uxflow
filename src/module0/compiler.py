@@ -143,7 +143,12 @@ class QueryCompiler:
 
         # ── Call 3 + Call 2' (conditional, at most once, no recursion) ──
         if ambiguous:
-            passed.extend(await self._clarify_and_reeval(ambiguous))
+            try:
+                passed.extend(await self._clarify_and_reeval(ambiguous))
+            except _StepFailed:
+                self._robustness["degraded"].append("clarify")
+                # Clarify path failed: ambiguous items stay in dropped_records,
+                # main flow continues (no recover, no crash).
 
         # ── Embedding (optional) ──
         if self._embedding_model is not None:
@@ -185,10 +190,10 @@ class QueryCompiler:
     async def _clarify_and_reeval(self, ambiguous: list[dict]) -> list[SubProblem]:
         """Call 3 (disambiguate) + Call 2' (re-eval). At most once, no recursion."""
         # ── Call 3 ──
-        c3_text, _ = await self._gateway.call(
-            build_call3_messages(ambiguous), self._model, max_tokens=self._max_tokens,
+        c3_results = await self._call_and_parse(
+            lambda: build_call3_messages(ambiguous),
+            parse_call3_response, step_name="call3",
         )
-        c3_results = parse_call3_response(c3_text)
 
         # Flatten clarified sub-problems, track parent_id
         clarified_raw: list[dict] = []
@@ -203,11 +208,10 @@ class QueryCompiler:
             return []
 
         # ── Call 2' ──
-        c2p_text, _ = await self._gateway.call(
-            build_call2_prime_messages(clarified_raw, self._taxonomy),
-            self._model, max_tokens=self._max_tokens,
+        c2p_results = await self._call_and_parse(
+            lambda: build_call2_prime_messages(clarified_raw, self._taxonomy),
+            parse_call2_response, step_name="call2prime",
         )
-        c2p_results = parse_call2_response(c2p_text)
 
         clarified_by_id = {c["id"]: c for c in clarified_raw}
         recovered: list[SubProblem] = []

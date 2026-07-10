@@ -310,3 +310,59 @@ async def test_call2_exhausted_degrades_to_empty_spec(taxonomy):
     assert spec.sub_problems == []
     assert spec.domain == "agentic_swe"
     assert "call2" in compiler.robustness_report["degraded"]
+
+
+# Call 2 that drops p1 as ambiguous (triggers Call 3 + Call 2').
+_C2_AMBIGUOUS = '''[{
+    "id": "p1",
+    "target_capability": ["valid_syntax_in_toolcall"],
+    "trajectory_signal": "含糊",
+    "hyde_positive": ["片段一超过二十字符的假设正例轨迹", "片段二超过二十字符的假设正例轨迹"],
+    "keywords": ["python"],
+    "structured_filters": {"languages": ["python"]},
+    "confidence": 0.3,
+    "route": "drop",
+    "drop_reason": "ambiguous"
+}]'''
+
+# Call 3 clarifies p1 into p1a.
+_C3_OK = '[{"original_id": "p1", "clarified": [{"id": "p1a", "raw_text": "澄清后的问题", "failure_summary": "澄清"}]}]'
+
+# Call 2' valid response recovering p1a.
+_C2P_OK = '''[{
+    "id": "p1a",
+    "target_capability": ["valid_syntax_in_toolcall"],
+    "trajectory_signal": "observation 含 SyntaxError",
+    "hyde_positive": ["片段一超过二十字符的假设正例轨迹", "片段二超过二十字符的假设正例轨迹"],
+    "keywords": ["SyntaxError"],
+    "structured_filters": {"languages": ["python"]},
+    "confidence": 0.9,
+    "route": "pass"
+}]'''
+
+# Call 2' response missing the required "route" field (the field the live LLM dropped).
+_C2P_MISSING_ROUTE = '''[{
+    "id": "p1a",
+    "target_capability": ["valid_syntax_in_toolcall"],
+    "trajectory_signal": "observation 含 SyntaxError",
+    "hyde_positive": ["片段一超过二十字符的假设正例轨迹", "片段二超过二十字符的假设正例轨迹"],
+    "keywords": ["SyntaxError"],
+    "structured_filters": {"languages": ["python"]},
+    "confidence": 0.9
+}]'''
+
+
+async def test_call2prime_missing_route_then_retry_succeeds(taxonomy):
+    gw = FakeGateway([_C1_OK, _C2_AMBIGUOUS, _C3_OK, _C2P_MISSING_ROUTE, _C2P_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("解题过程中途停止")
+    assert any(sp.id == "p1a" for sp in spec.sub_problems)
+    assert compiler.robustness_report["retries"]["call2prime"] == 1
+
+
+async def test_call2prime_exhausted_degrades_without_crash(taxonomy):
+    gw = FakeGateway([_C1_OK, _C2_AMBIGUOUS, _C3_OK, _C2P_MISSING_ROUTE, _C2P_MISSING_ROUTE])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("解题过程中途停止")
+    assert all(sp.id != "p1a" for sp in spec.sub_problems)
+    assert "clarify" in compiler.robustness_report["degraded"]
