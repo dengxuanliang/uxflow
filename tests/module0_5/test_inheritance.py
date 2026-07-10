@@ -76,3 +76,15 @@ def test_input_hits_not_mutated():
 
 def test_empty_hits_returns_empty():
     assert rerank_with_inheritance([], target_label="handle_async_race", taxonomy=_tax()) == []
+
+
+def test_backfill_upgrades_inherited_to_exact():
+    # Before backfill: slice labeled only with parent → ×0.3
+    hit = _Hit(_Sig("C", ["error_recovery"]), 1.0)
+    out1 = rerank_with_inheritance([hit], target_label="handle_async_race", taxonomy=_tax())
+    assert abs(out1[0].rrf_score - 0.3) < 1e-9
+
+    # After backfill: same slice now carries the target label → ×1.0
+    hit2 = _Hit(_Sig("C", ["error_recovery", "handle_async_race"]), 1.0)
+    out2 = rerank_with_inheritance([hit2], target_label="handle_async_race", taxonomy=_tax())
+    assert out2[0].rrf_score == 1.0
