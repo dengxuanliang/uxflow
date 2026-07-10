@@ -3,6 +3,8 @@
 All enumerations, field names, and validation rules are frozen per contract.
 Do NOT add, rename, or relax without updating the contract document.
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

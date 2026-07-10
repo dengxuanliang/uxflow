@@ -3,6 +3,8 @@
 Contract §6: all embedding call sites MUST use the same model + dimension.
 Injecting one Embedder instance makes that a structural guarantee.
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

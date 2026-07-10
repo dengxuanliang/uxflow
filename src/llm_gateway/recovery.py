@@ -26,6 +26,8 @@ cancelling old tasks. Cancellation forces the orchestrator's
 if those new dispatches happen before the swap is visible they would
 inherit the zombie client.
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

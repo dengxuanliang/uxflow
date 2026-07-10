@@ -7,6 +7,8 @@ Loads a taxonomy JSON file (contract §5 schema), provides:
 
 Does NOT write back or evolve taxonomy (that's Plan B / module 0.5).
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

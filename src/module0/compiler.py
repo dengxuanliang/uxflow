@@ -10,6 +10,8 @@ Flow (spec §3.2):
 
 Hard invariant: at most 4 LLM calls, Call 3+2' at most once, no recursion.
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

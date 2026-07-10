@@ -3,6 +3,8 @@
 Orchestrates: truncation -> admission (gate+limiter) -> transport -> observe -> stats.
 Rate limiting is always at this layer (both adaptive and non-adaptive modes).
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

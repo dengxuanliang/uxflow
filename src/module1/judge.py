@@ -4,6 +4,8 @@ Sends compressed slice summaries to LLM via gateway.
 Batch strategy: 3 slices per request (≤10k token budget).
 Output: JudgeResult per slice (match/confidence/spans/reasoning).
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

@@ -3,6 +3,8 @@
 Pure rules + regex. No LLM cost. Embedding is optional (pass
 embedding_model=None to skip for unit tests).
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

@@ -8,6 +8,8 @@ without torch installed.
 
 Contract §6: same model + dimension across all embedding call sites.
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

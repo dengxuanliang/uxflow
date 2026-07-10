@@ -9,6 +9,8 @@ gateway does not parse business JSON, so validation_error is dropped;
 parse_error is kept to signal a structurally-broken 200 response
 (missing choices[0].message.content).
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

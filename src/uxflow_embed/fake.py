@@ -4,6 +4,8 @@ For unit tests across modules 1/2/3/0.5: they care about how vectors are
 ranked/deduped/recalled, not vector semantics. Lets tests run on CI with
 no torch and no GPU.
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

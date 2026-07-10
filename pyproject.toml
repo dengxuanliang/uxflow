@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "SWE trajectory selector for SFT dataset curation"
 requires-python = ">=3.11"
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 readme = "README.md"
 authors = [{name = "dengxuanliang"}]
 

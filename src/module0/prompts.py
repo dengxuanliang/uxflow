@@ -9,6 +9,8 @@ Key design decisions:
 - Call 2' reuses Call 2 prompt but with explicit "不输出 drop_reason" constraint
 - All prompts request JSON output with specified schema
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

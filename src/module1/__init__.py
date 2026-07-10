@@ -3,6 +3,8 @@
 Processes backflow trajectories to find positive capability demonstrations
 and output loss mask spans for SFT training.
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from module1.models import (
     Step,

@@ -1,4 +1,6 @@
 """Module 3 orchestration: dedup -> select -> compose."""
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

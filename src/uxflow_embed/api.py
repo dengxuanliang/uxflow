@@ -4,6 +4,8 @@ Works with any provider exposing the OpenAI embeddings format (OpenAI,
 Qwen/DashScope compatible endpoint, vLLM, Ollama, ...). API key is read
 from the api_key arg or the OPENAI_API_KEY env var.
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 
