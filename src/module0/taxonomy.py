@@ -134,16 +134,16 @@ class TaxonomyStore:
             "updated_at": self._updated_at,
             "labels": [
                 {
-                    "label": l.label,
-                    "parent": l.parent,
-                    "new_root": l.new_root,
-                    "description": l.description,
-                    "keywords": l.keywords,
-                    "description_embedding": l.description_embedding,
-                    "taxonomy_extension": l.taxonomy_extension,
-                    "created_at": l.created_at,
+                    "label": lbl.label,
+                    "parent": lbl.parent,
+                    "new_root": lbl.new_root,
+                    "description": lbl.description,
+                    "keywords": lbl.keywords,
+                    "description_embedding": lbl.description_embedding,
+                    "taxonomy_extension": lbl.taxonomy_extension,
+                    "created_at": lbl.created_at,
                 }
-                for l in self._labels
+                for lbl in self._labels
             ],
         }
         with open(path, "w") as f:

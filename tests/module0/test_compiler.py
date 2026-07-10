@@ -1,6 +1,7 @@
 import pytest
 from module0.compiler import QueryCompiler
 from module0.taxonomy import Taxonomy
+from uxflow_embed import FakeEmbedder
 
 
 class FakeGateway:
@@ -386,8 +387,6 @@ async def test_happy_path_records_no_retries_no_degrade(taxonomy):
     assert report["retries"] == {"call1": 0, "call2": 0, "call3": 0, "call2prime": 0}
     assert report["degraded"] == []
 
-
-from uxflow_embed import FakeEmbedder
 
 _C2_WITH_PROPOSAL = '''[{
     "id": "p1",

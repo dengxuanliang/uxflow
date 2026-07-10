@@ -1,6 +1,6 @@
-from module0.taxonomy import TaxonomyLabel
+from module0.taxonomy import TaxonomyLabel, TaxonomyStore, Taxonomy
 from module0_5 import LabelProposal
-from module0_5.evolution import resolve_proposal, ProposalResolution
+from module0_5.evolution import resolve_proposal, ingest_proposal
 
 
 def _existing(name, parent, emb):
@@ -55,10 +55,6 @@ def test_thresholds_are_configurable():
     assert res.kind != "duplicate"
 
 
-from module0.taxonomy import TaxonomyStore, Taxonomy
-from module0_5.evolution import ingest_proposal
-
-
 def _store():
     tax = Taxonomy(version="0.1.0", updated_at="2026-01-01T00:00:00Z", labels=_labels())
     return TaxonomyStore(tax)
@@ -88,7 +84,7 @@ def test_ingest_duplicate_does_not_add():
 def test_ingest_new_root_sets_new_root_flag():
     store = _store()
     prop = _proposal([0.0, 0.0, 1.0])  # new_root (orthogonal)
-    res = ingest_proposal(prop, store, created_at="2026-07-10T00:00:00Z")
+    ingest_proposal(prop, store, created_at="2026-07-10T00:00:00Z")
     added = store.snapshot().get("new_leaf")  # proposal.label is "new_leaf"
     assert added.new_root is True
     assert added.parent is None

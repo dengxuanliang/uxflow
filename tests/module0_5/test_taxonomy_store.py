@@ -24,7 +24,7 @@ def test_snapshot_returns_readonly_taxonomy():
 
 def test_existing_labels_lists_current():
     store = TaxonomyStore(_base())
-    names = {l.label for l in store.existing_labels()}
+    names = {lbl.label for lbl in store.existing_labels()}
     assert names == {"error_recovery", "effective_error_fix"}
 
 
@@ -50,5 +50,5 @@ def test_save_writes_contract_json(tmp_path):
     store.save(out)
     data = json.loads(out.read_text())
     assert data["version"] == "0.1.1"
-    labels = {l["label"] for l in data["labels"]}
+    labels = {lbl["label"] for lbl in data["labels"]}
     assert "handle_async_race" in labels

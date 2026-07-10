@@ -55,7 +55,7 @@ def resolve_proposal(
     if best_dup is not None and best_dup_sim > dedup_threshold:
         return ProposalResolution(kind="duplicate", maps_to=best_dup.label)
 
-    roots = [l for l in existing if l.parent is None]
+    roots = [lbl for lbl in existing if lbl.parent is None]
     best_root, best_root_sim = None, -1.0
     for root in roots:
         sim = _cosine(emb, root.description_embedding)

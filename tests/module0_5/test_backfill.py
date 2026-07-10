@@ -1,4 +1,3 @@
-import pytest
 
 from module0.taxonomy import TaxonomyLabel
 from module0_5.backfill import run_backfill
