@@ -126,3 +126,31 @@ def test_parse_escaped_quotes_in_string():
     raw = r'{"sub_problems": [{"id": "p1", "raw_text": "he said \"hello\"", "failure_summary": "test"}]}'
     result = parse_call1_response(raw)
     assert len(result) == 1
+
+
+def test_parse_call2_preserves_label_proposals():
+    from module0.parsing import parse_call2_response
+    raw = '''[{
+        "id": "p1",
+        "target_capability": ["new_cap"],
+        "trajectory_signal": "sig",
+        "hyde_positive": ["seg1 twentychars.........", "seg2 twentychars........."],
+        "keywords": ["k"],
+        "structured_filters": {},
+        "confidence": 0.9,
+        "route": "pass",
+        "label_proposals": [{"label": "new_cap", "description": "d", "parent": null, "keywords": ["k"], "taxonomy_extension": true}]
+    }]'''
+    items = parse_call2_response(raw)
+    assert items[0]["label_proposals"][0]["label"] == "new_cap"
+
+
+def test_parse_call2_ok_without_label_proposals():
+    from module0.parsing import parse_call2_response
+    raw = '''[{
+        "id": "p1", "target_capability": ["c"], "trajectory_signal": "s",
+        "hyde_positive": ["seg1 twentychars.........", "seg2 twentychars........."],
+        "keywords": ["k"], "structured_filters": {}, "confidence": 0.9, "route": "pass"
+    }]'''
+    items = parse_call2_response(raw)
+    assert "label_proposals" not in items[0]
