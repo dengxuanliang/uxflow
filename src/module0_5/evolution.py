@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import numpy as np
 
@@ -17,7 +18,7 @@ __all__ = ["resolve_proposal", "ProposalResolution"]
 @dataclass
 class ProposalResolution:
     """② 判定结果。kind ∈ {duplicate, new_leaf, new_root}。"""
-    kind: str
+    kind: Literal["duplicate", "new_leaf", "new_root"]
     maps_to: str | None = None      # duplicate: 映射到的已有标签名
     parent: str | None = None       # new_leaf: 挂载父节点；new_root: None
     new_root: bool = False
