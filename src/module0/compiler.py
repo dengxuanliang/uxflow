@@ -16,6 +16,7 @@ Hard invariant: at most 4 LLM calls, Call 3+2' at most once, no recursion.
 from __future__ import annotations
 
 from module0.parsing import (
+    ParseError,
     parse_call1_response,
     parse_call2_response,
     parse_call3_response,
@@ -71,17 +72,33 @@ class QueryCompiler:
         # Not part of the Problem Spec (contract §4 — computed query anchors,
         # consumed by the downstream retrieval layer / Module 1).
         self.hyde_embeddings: dict[str, list[list[float]]] = {}
+        self._robustness = {
+            "retries": {"call1": 0, "call2": 0, "call3": 0, "call2prime": 0},
+            "degraded": [],
+        }
+
+    @property
+    def robustness_report(self) -> dict:
+        """Retry/degrade stats for the last compile() run."""
+        return self._robustness
 
     async def compile(self, raw_input: str) -> ProblemSpec:
         """Run the full compilation pipeline. At most 4 LLM calls."""
         self.dropped_records = []
         self.hyde_embeddings = {}
+        self._robustness = {
+            "retries": {"call1": 0, "call2": 0, "call3": 0, "call2prime": 0},
+            "degraded": [],
+        }
 
         # ── Call 1: decompose ──
-        c1_text, _ = await self._gateway.call(
-            build_call1_messages(raw_input), self._model, max_tokens=self._max_tokens,
-        )
-        sub_problems_raw = parse_call1_response(c1_text)
+        try:
+            sub_problems_raw = await self._call_and_parse(
+                lambda: build_call1_messages(raw_input),
+                parse_call1_response, step_name="call1",
+            )
+        except _StepFailed as e:
+            raise CompileError(f"Call 1 failed after retries: {e}") from e
 
         # ── Call 2: label + self-eval ──
         c2_text, _ = await self._gateway.call(
@@ -132,6 +149,28 @@ class QueryCompiler:
                 self.hyde_embeddings[sp.id] = vecs
 
         return ProblemSpec(raw_input=raw_input, domain="agentic_swe", sub_problems=passed)
+
+    async def _call_and_parse(self, build_messages_fn, parser, *, step_name, max_attempts=2):
+        """Call the LLM and parse; retry once on empty/malformed response.
+
+        Raises _StepFailed when all attempts are exhausted; the caller decides
+        how to degrade. Parsing stays strict — this only adds retry/None-guard.
+        """
+        last_err = None
+        for attempt in range(max_attempts):
+            content, _ = await self._gateway.call(
+                build_messages_fn(), self._model, max_tokens=self._max_tokens
+            )
+            try:
+                if not content or not content.strip():
+                    raise RetryableParseError(f"{step_name}: empty response")
+                return parser(content)
+            except (ParseError, RetryableParseError) as e:
+                last_err = e
+                if attempt + 1 < max_attempts:
+                    self._robustness["retries"][step_name] += 1
+                continue
+        raise _StepFailed(step_name, last_err)
 
     async def _clarify_and_reeval(self, ambiguous: list[dict]) -> list[SubProblem]:
         """Call 3 (disambiguate) + Call 2' (re-eval). At most once, no recursion."""

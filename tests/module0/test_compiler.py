@@ -261,3 +261,33 @@ async def test_i1_dropped_records_reset_per_compile(taxonomy):
 def test_compile_error_is_importable_and_is_exception():
     from module0 import CompileError
     assert issubclass(CompileError, Exception)
+
+
+_C2_OK = '''[{
+    "id": "p1",
+    "target_capability": ["valid_syntax_in_toolcall"],
+    "trajectory_signal": "observation 含 SyntaxError",
+    "hyde_positive": ["正例片段一,超过二十字符的假设轨迹", "正例片段二,超过二十字符的假设轨迹"],
+    "keywords": ["SyntaxError", "python"],
+    "structured_filters": {"languages": ["python"]},
+    "confidence": 0.92,
+    "route": "pass"
+}]'''
+
+_C1_OK = '{"sub_problems": [{"id": "p1", "raw_text": "写入py有语法错误", "failure_summary": "语法错误"}]}'
+
+
+async def test_call1_empty_then_retry_succeeds(taxonomy):
+    gw = FakeGateway([None, _C1_OK, _C2_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    assert len(spec.sub_problems) == 1
+    assert compiler.robustness_report["retries"]["call1"] == 1
+
+
+async def test_call1_hard_fail_raises_compile_error(taxonomy):
+    from module0 import CompileError
+    gw = FakeGateway([None, None])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    with pytest.raises(CompileError):
+        await compiler.compile("写入py文件有语法错误")
