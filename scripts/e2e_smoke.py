@@ -29,6 +29,13 @@ from module1.pipeline import TrajectoryPipeline, PipelineConfig  # noqa: E402
 from module3.compose import GeneralDataConfig  # noqa: E402
 from module3.pipeline import select_final_dataset  # noqa: E402
 from module3.selection import SelectionConfig  # noqa: E402
+from module0.taxonomy import TaxonomyStore  # noqa: E402
+from module0_5 import (  # noqa: E402
+    LabelProposal,
+    ingest_proposal,
+    rerank_with_inheritance,
+    run_backfill,
+)
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────
@@ -252,6 +259,75 @@ async def main():
             print("   排查方向: 检查上方召回结果是否为空 → "
                   "若空则检查 filters/keywords 对齐；"
                   "若有召回但得分低则检查 judge 与软加分结果。")
+
+        # ── Module 0.5: 标签演化真实链路 ─────────────────────────────────
+        _print_section("模块0.5: ①提议捕获 → ②入库 → ③继承 → ④回填 → ③升权")
+
+        # ① 提议捕获（真实,尽力而为）——读主链路那次 compiler 的产出
+        real_proposals = compiler.label_proposals
+        print(f"① module0 本次产出 label_proposals: {len(real_proposals)} 条")
+        for p in real_proposals:
+            print(f"    提议: {p.label} (parent={p.parent}) — {p.description[:40]}")
+
+        # 选定新标签: 真实提议优先, 否则注入兜底 fix_runtime_exception
+        if real_proposals:
+            proposal = real_proposals[0]
+            print(f"→ 使用真实提议: {proposal.label}")
+        else:
+            desc = "修复运行时抛出的异常，如 TypeError/KeyError/ValueError"
+            proposal = LabelProposal(
+                label="fix_runtime_exception",
+                description=desc,
+                parent="error_recovery",
+                description_embedding=emb.embed(desc),
+                keywords=["TypeError", "KeyError", "ValueError", "Traceback", "RuntimeError"],
+                source_sub_problem_id="e2e_injected",
+            )
+            print(f"→ module0 未提议, 注入兜底标签: {proposal.label}")
+
+        # ② 去重+挂载入库（真实 embedding）
+        store = TaxonomyStore(taxonomy)
+        res = ingest_proposal(proposal, store, created_at="2026-07-10T00:00:00Z")
+        print(f"\n② 入库判定: kind={res.kind}, parent={res.parent}, "
+              f"maps_to={res.maps_to}")
+        print(f"   入库后 taxonomy version: {store.snapshot().version}")
+
+        if res.kind == "duplicate":
+            print("   提议判为重复(映射到已有标签), 无新标签入库, 跳过 ③④。")
+        else:
+            # ③ 回填前: 继承降权兜底（真实召回）
+            def _recall_for_label():
+                return pipeline._store.recall(
+                    structured_filters={},
+                    keywords=proposal.keywords,
+                    query_embeddings=[proposal.description_embedding],
+                    top_n=cfg.recall_top_n,
+                )
+
+            hits_before = _recall_for_label()
+            before = rerank_with_inheritance(
+                hits_before, target_label=proposal.label, taxonomy=store.snapshot())
+            print(f"\n③ 回填前 rerank (target={proposal.label}), top 5:")
+            for h in before[:5]:
+                print(f"    {h.signature.trajectory_id}/slice{h.signature.slice_index} "
+                      f"score={h.rrf_score:.4f} labels={h.signature.capability_labels}")
+
+            # ④ 异步回填（真实 judge）
+            new_label = store.snapshot().get(proposal.label)
+            bf = await run_backfill(new_label, pipeline._store, pipeline._judge)
+            print(f"\n④ 回填结果: screened={bf.candidates_screened}, "
+                  f"judged_true={bf.judged_true}, written={bf.slices_written}, "
+                  f"errors={bf.errors}")
+
+            # ③ 回填后: 精确升权（对比）
+            hits_after = _recall_for_label()
+            after = rerank_with_inheritance(
+                hits_after, target_label=proposal.label, taxonomy=store.snapshot())
+            print(f"\n③ 回填后 rerank (target={proposal.label}), top 5:")
+            for h in after[:5]:
+                mark = " ← 精确命中(×1.0)" if proposal.label in (h.signature.capability_labels or []) else ""
+                print(f"    {h.signature.trajectory_id}/slice{h.signature.slice_index} "
+                      f"score={h.rrf_score:.4f}{mark}")
 
         # ── Stats ────────────────────────────────────────────────────────
         _print_section("Gateway 统计")
