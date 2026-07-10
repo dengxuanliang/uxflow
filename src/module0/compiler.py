@@ -101,11 +101,14 @@ class QueryCompiler:
             raise CompileError("Call 1 failed after retries") from e
 
         # ── Call 2: label + self-eval ──
-        c2_text, _ = await self._gateway.call(
-            build_call2_messages(sub_problems_raw, self._taxonomy),
-            self._model, max_tokens=self._max_tokens,
-        )
-        c2_results = parse_call2_response(c2_text)
+        try:
+            c2_results = await self._call_and_parse(
+                lambda: build_call2_messages(sub_problems_raw, self._taxonomy),
+                parse_call2_response, step_name="call2",
+            )
+        except _StepFailed:
+            c2_results = []
+            self._robustness["degraded"].append("call2")
 
         # Index raw sub-problems by id for merging
         raw_by_id = {sp["id"]: sp for sp in sub_problems_raw}

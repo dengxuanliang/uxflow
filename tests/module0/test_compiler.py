@@ -291,3 +291,22 @@ async def test_call1_hard_fail_raises_compile_error(taxonomy):
     compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
     with pytest.raises(CompileError):
         await compiler.compile("写入py文件有语法错误")
+
+
+async def test_call2_empty_then_retry_succeeds(taxonomy):
+    # Call 1 ok; Call 2 empty then valid.
+    gw = FakeGateway([_C1_OK, None, _C2_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    assert len(spec.sub_problems) == 1
+    assert compiler.robustness_report["retries"]["call2"] == 1
+
+
+async def test_call2_exhausted_degrades_to_empty_spec(taxonomy):
+    # Call 1 ok; Call 2 empty on both attempts → degrade, empty spec, no crash.
+    gw = FakeGateway([_C1_OK, None, None])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    assert spec.sub_problems == []
+    assert spec.domain == "agentic_swe"
+    assert "call2" in compiler.robustness_report["degraded"]
