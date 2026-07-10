@@ -40,3 +40,13 @@ async def test_backfill_result_counts(populated_index):
     result = await run_backfill(_new_label(), populated_index, judge, top_k=10)
     assert result.candidates_screened >= 2
     assert result.judged_true == 2
+
+
+async def test_backfill_judge_failure_returns_errors_not_crash(populated_index):
+    class ExplodingJudge:
+        async def judge_batch(self, **kwargs):
+            raise RuntimeError("llm down")
+
+    result = await run_backfill(_new_label(), populated_index, ExplodingJudge(), top_k=10)
+    assert result.slices_written == 0
+    assert any("judge" in e for e in result.errors)
