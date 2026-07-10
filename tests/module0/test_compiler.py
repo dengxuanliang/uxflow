@@ -366,3 +366,22 @@ async def test_call2prime_exhausted_degrades_without_crash(taxonomy):
     spec = await compiler.compile("解题过程中途停止")
     assert all(sp.id != "p1a" for sp in spec.sub_problems)
     assert "clarify" in compiler.robustness_report["degraded"]
+
+
+async def test_bad_json_and_empty_both_retried(taxonomy):
+    # Call 2 returns non-JSON garbage first, then valid → should retry & succeed.
+    gw = FakeGateway([_C1_OK, "not json {{{", _C2_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    assert len(spec.sub_problems) == 1
+    assert compiler.robustness_report["retries"]["call2"] == 1
+
+
+async def test_happy_path_records_no_retries_no_degrade(taxonomy):
+    gw = FakeGateway([_C1_OK, _C2_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    assert len(spec.sub_problems) == 1
+    report = compiler.robustness_report
+    assert report["retries"] == {"call1": 0, "call2": 0, "call3": 0, "call2prime": 0}
+    assert report["degraded"] == []
