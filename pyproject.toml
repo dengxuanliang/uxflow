@@ -28,7 +28,7 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/llm_gateway", "src/module0", "src/module1", "src/module2", "src/module3", "src/uxflow_embed"]
+packages = ["src/llm_gateway", "src/module0", "src/module1", "src/module2", "src/module3", "src/uxflow_embed", "src/module0_5"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
