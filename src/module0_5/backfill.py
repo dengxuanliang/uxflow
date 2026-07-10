@@ -24,6 +24,9 @@ async def run_backfill(
     Step 2 粗筛（零LLM）：store.recall(...) 取 top_k，跳过已标该 label 的。
     Step 3 精判（LLM）：judge.judge_batch 判该切片是否演示此能力。
     Step 4 写回：judged_true 的 → store.update_labels（合并语义，幂等）。
+
+    judge_batch_size is a reserved contract seam; batching is currently owned
+    by the injected Judge, so this param is not consumed in V1.
     """
     label = new_label.label
     errors: list[str] = []
@@ -36,19 +39,18 @@ async def run_backfill(
             query_embeddings=query_embeddings,
             top_n=top_k,
         )
+        candidates, slices = [], []
+        for hit in hits:
+            sig = hit.signature
+            if label in (sig.capability_labels or []):
+                continue  # idempotence: skip already-labeled
+            sl = store.get_slice(sig.trajectory_id, sig.slice_index)
+            if sl is not None:
+                candidates.append(sig)
+                slices.append(sl)
     except Exception as e:
         return BackfillResult(label=label, candidates_screened=0,
                               judged_true=0, slices_written=0, errors=[f"recall: {e}"])
-
-    candidates, slices = [], []
-    for hit in hits:
-        sig = hit.signature
-        if label in (sig.capability_labels or []):
-            continue  # idempotence: skip already-labeled
-        sl = store.get_slice(sig.trajectory_id, sig.slice_index)
-        if sl is not None:
-            candidates.append(sig)
-            slices.append(sl)
 
     if not slices:
         return BackfillResult(label=label, candidates_screened=0,
