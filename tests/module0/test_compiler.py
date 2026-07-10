@@ -385,3 +385,48 @@ async def test_happy_path_records_no_retries_no_degrade(taxonomy):
     report = compiler.robustness_report
     assert report["retries"] == {"call1": 0, "call2": 0, "call3": 0, "call2prime": 0}
     assert report["degraded"] == []
+
+
+from uxflow_embed import FakeEmbedder
+
+_C2_WITH_PROPOSAL = '''[{
+    "id": "p1",
+    "target_capability": ["new_cap"],
+    "trajectory_signal": "observation 含 SyntaxError",
+    "hyde_positive": ["正例片段一,超过二十字符的假设轨迹", "正例片段二,超过二十字符的假设轨迹"],
+    "keywords": ["SyntaxError"],
+    "structured_filters": {"languages": ["python"]},
+    "confidence": 0.92,
+    "route": "pass",
+    "label_proposals": [{"label": "new_cap", "description": "新能力描述", "parent": "code_generation", "keywords": ["SyntaxError"], "taxonomy_extension": true}]
+}]'''
+
+
+async def test_compiler_collects_label_proposals(taxonomy):
+    gw = FakeGateway([_C1_OK, _C2_WITH_PROPOSAL])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model",
+                             embedding_model=FakeEmbedder(dimension=8))
+    await compiler.compile("写入py文件有语法错误")
+    assert len(compiler.label_proposals) == 1
+    prop = compiler.label_proposals[0]
+    assert prop.label == "new_cap"
+    assert prop.parent == "code_generation"
+    assert prop.source_sub_problem_id == "p1"
+    assert len(prop.description_embedding) == 8
+
+
+async def test_compiler_no_proposals_when_none_offered(taxonomy):
+    gw = FakeGateway([_C1_OK, _C2_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model",
+                             embedding_model=FakeEmbedder(dimension=8))
+    await compiler.compile("写入py文件有语法错误")
+    assert compiler.label_proposals == []
+
+
+async def test_compiler_drops_proposals_from_dropped_items(taxonomy):
+    c2_dropped = _C2_WITH_PROPOSAL.replace('"route": "pass"', '"route": "drop", "drop_reason": "not_applicable"').replace('"confidence": 0.92', '"confidence": 0.2')
+    gw = FakeGateway([_C1_OK, c2_dropped])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model",
+                             embedding_model=FakeEmbedder(dimension=8))
+    await compiler.compile("写入py文件有语法错误")
+    assert compiler.label_proposals == []

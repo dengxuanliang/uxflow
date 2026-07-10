@@ -34,6 +34,7 @@ from module0.schema import (
     StructuredFilters,
 )
 from module0.taxonomy import Taxonomy
+from module0_5.models import LabelProposal
 
 __all__ = ["QueryCompiler", "CompileError"]
 
@@ -72,6 +73,8 @@ class QueryCompiler:
         # Not part of the Problem Spec (contract §4 — computed query anchors,
         # consumed by the downstream retrieval layer / Module 1).
         self.hyde_embeddings: dict[str, list[list[float]]] = {}
+        self.label_proposals: list[LabelProposal] = []
+        self._collected_proposals: list[dict] = []
         self._robustness = {
             "retries": {"call1": 0, "call2": 0, "call3": 0, "call2prime": 0},
             "degraded": [],
@@ -86,6 +89,8 @@ class QueryCompiler:
         """Run the full compilation pipeline. At most 4 LLM calls."""
         self.dropped_records = []
         self.hyde_embeddings = {}
+        self.label_proposals = []
+        self._collected_proposals = []
         self._robustness = {
             "retries": {"call1": 0, "call2": 0, "call3": 0, "call2prime": 0},
             "degraded": [],
@@ -128,6 +133,7 @@ class QueryCompiler:
                 # instead of crashing the whole batch.
                 try:
                     passed.append(self._build_sub_problem(result, raw, origin="original", parent_id=None))
+                    self._collect_proposals(result)
                 except ValueError:
                     self._record_dropped(result, raw, "other")
             else:
@@ -155,6 +161,15 @@ class QueryCompiler:
             for sp in passed:
                 vecs = self._embedding_model.embed_batch(sp.hyde_positive)
                 self.hyde_embeddings[sp.id] = vecs
+
+        # ── Label proposals: compute description embeddings (same model) ──
+        for p in self._collected_proposals:
+            emb = self._embedding_model.embed(p["description"]) if self._embedding_model is not None else []
+            self.label_proposals.append(LabelProposal(
+                label=p["label"], description=p["description"], parent=p["parent"],
+                description_embedding=emb, keywords=p["keywords"],
+                source_sub_problem_id=p["source_sub_problem_id"],
+            ))
 
         return ProblemSpec(raw_input=raw_input, domain="agentic_swe", sub_problems=passed)
 
@@ -223,9 +238,22 @@ class QueryCompiler:
                     recovered.append(self._build_sub_problem(
                         result, raw, origin="clarified", parent_id=parent_map.get(sp_id),
                     ))
+                    self._collect_proposals(result)
                 except ValueError:
                     pass  # schema-invalid clarified item silently dropped
         return recovered
+
+    def _collect_proposals(self, result: dict) -> None:
+        """就地采集一个 passed/recovered item 的 label_proposals 原始 dict。"""
+        for prop in result.get("label_proposals", []) or []:
+            if prop.get("taxonomy_extension"):
+                self._collected_proposals.append({
+                    "label": prop.get("label", ""),
+                    "description": prop.get("description", ""),
+                    "parent": prop.get("parent"),
+                    "keywords": prop.get("keywords", []),
+                    "source_sub_problem_id": result.get("id", ""),
+                })
 
     def _build_sub_problem(self, result: dict, raw: dict, *, origin: str,
                            parent_id: str | None) -> SubProblem:
