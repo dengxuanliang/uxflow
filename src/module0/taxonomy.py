@@ -16,7 +16,7 @@ import json
 import pathlib
 from dataclasses import dataclass
 
-__all__ = ["Taxonomy", "TaxonomyLabel"]
+__all__ = ["Taxonomy", "TaxonomyLabel", "TaxonomyStore"]
 
 
 @dataclass(frozen=True)
@@ -100,3 +100,60 @@ class Taxonomy:
             for child in children.get(root.label, []):
                 lines.append(f"  ├── {child.label}  {child.description}")
         return "\n".join(lines)
+
+
+class TaxonomyStore:
+    """可变演化层。Taxonomy 保持只读；本类为唯一写入点。"""
+
+    def __init__(self, taxonomy: Taxonomy):
+        self._version = taxonomy.version
+        self._updated_at = taxonomy.updated_at
+        self._labels: list[TaxonomyLabel] = list(taxonomy.labels)
+
+    def snapshot(self) -> Taxonomy:
+        """产出只读快照供 prompt 注入 / 查询。"""
+        return Taxonomy(
+            version=self._version,
+            updated_at=self._updated_at,
+            labels=list(self._labels),
+        )
+
+    def existing_labels(self) -> list[TaxonomyLabel]:
+        """当前全部标签（供 ② 算余弦）。"""
+        return list(self._labels)
+
+    def add_label(self, label: TaxonomyLabel) -> None:
+        """追加新标签 + version patch +1。不影响已有条目。"""
+        self._labels.append(label)
+        self._version = _bump_patch(self._version)
+
+    def save(self, path) -> None:
+        """写回契约 §5.2 结构的 JSON。"""
+        data = {
+            "version": self._version,
+            "updated_at": self._updated_at,
+            "labels": [
+                {
+                    "label": l.label,
+                    "parent": l.parent,
+                    "new_root": l.new_root,
+                    "description": l.description,
+                    "keywords": l.keywords,
+                    "description_embedding": l.description_embedding,
+                    "taxonomy_extension": l.taxonomy_extension,
+                    "created_at": l.created_at,
+                }
+                for l in self._labels
+            ],
+        }
+        with open(path, "w") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+
+def _bump_patch(version: str) -> str:
+    """Increment the patch component of a semver-ish 'a.b.c' string."""
+    parts = version.split(".")
+    if len(parts) != 3 or not parts[2].isdigit():
+        return version  # non-standard version left as-is
+    parts[2] = str(int(parts[2]) + 1)
+    return ".".join(parts)
