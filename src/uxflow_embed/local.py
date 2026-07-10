@@ -1,7 +1,8 @@
 """LocalEmbedder — Qwen3-Embedding via sentence-transformers (optional dep).
 
 Produces 1024-d L2-normalized vectors on MPS/CUDA/CPU. Model auto-downloads
-from HuggingFace on first use (no local_files_only). Requires the
+from HuggingFace on first use (local_files_only defaults to False; pass
+True for air-gapped/offline use). Requires the
 [local-embed] extra; heavy imports are lazy so `import uxflow_embed` works
 without torch installed.
 
@@ -21,7 +22,7 @@ _DIMENSION = 1024
 class LocalEmbedder:
     """Wrapper for local Qwen3-Embedding inference."""
 
-    def __init__(self, model_name: str = _MODEL_NAME, device: str | None = None):
+    def __init__(self, model_name: str = _MODEL_NAME, device: str | None = None, local_files_only: bool = False):
         try:
             from sentence_transformers import SentenceTransformer
             import torch
@@ -39,8 +40,9 @@ class LocalEmbedder:
             else:
                 device = "cpu"
 
-        # No local_files_only: auto-download so cloners can run out of the box.
-        self._model = SentenceTransformer(model_name, device=device)
+        # Default local_files_only=False auto-downloads so cloners run out of
+        # the box; pass True for air-gapped/offline use.
+        self._model = SentenceTransformer(model_name, device=device, local_files_only=local_files_only)
         self._dimension = _DIMENSION
 
     @property

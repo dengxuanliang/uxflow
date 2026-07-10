@@ -24,3 +24,10 @@ def test_instantiation_without_torch_raises_clear_error():
     with pytest.raises(ImportError) as exc:
         LocalEmbedder()
     assert "local-embed" in str(exc.value)
+
+
+def test_local_files_only_param_defaults_false():
+    import inspect
+    from uxflow_embed import LocalEmbedder
+    sig = inspect.signature(LocalEmbedder.__init__)
+    assert sig.parameters["local_files_only"].default is False
