@@ -51,7 +51,7 @@ class RetryableParseError(ParseError):
 class _StepFailed(Exception):
     """Internal: a step exhausted its retries. Caught by compile() to degrade."""
 
-    def __init__(self, step_name: str, last_error):
+    def __init__(self, step_name: str, last_error: Exception | None):
         self.step_name = step_name
         self.last_error = last_error
         super().__init__(f"{step_name} failed after retries: {last_error}")
@@ -180,7 +180,7 @@ class QueryCompiler:
                 if not content or not content.strip():
                     raise RetryableParseError(f"{step_name}: empty response")
                 return parser(content)
-            except (ParseError, RetryableParseError) as e:
+            except ParseError as e:  # RetryableParseError is a subclass
                 last_err = e
                 if attempt + 1 < max_attempts:
                     self._robustness["retries"][step_name] += 1
