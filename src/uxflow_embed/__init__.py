@@ -2,5 +2,6 @@
 
 from uxflow_embed.protocol import Embedder
 from uxflow_embed.fake import FakeEmbedder
+from uxflow_embed.local import LocalEmbedder
 
-__all__ = ["Embedder", "FakeEmbedder"]
+__all__ = ["Embedder", "FakeEmbedder", "LocalEmbedder"]
