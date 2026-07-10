@@ -16,6 +16,7 @@ Hard invariant: at most 4 LLM calls, Call 3+2' at most once, no recursion.
 from __future__ import annotations
 
 from module0.parsing import (
+    ParseError,
     parse_call1_response,
     parse_call2_response,
     parse_call3_response,
@@ -34,9 +35,26 @@ from module0.schema import (
 )
 from module0.taxonomy import Taxonomy
 
-__all__ = ["QueryCompiler"]
+__all__ = ["QueryCompiler", "CompileError"]
 
 _PASS_THRESHOLD = 0.8  # spec Part 6 分流规则
+
+
+class CompileError(Exception):
+    """Raised when compilation cannot proceed (Call 1 failed after retries)."""
+
+
+class RetryableParseError(ParseError):
+    """Internal signal: this step should be retried (empty response)."""
+
+
+class _StepFailed(Exception):
+    """Internal: a step exhausted its retries. Caught by compile() to degrade."""
+
+    def __init__(self, step_name: str, last_error: Exception | None):
+        self.step_name = step_name
+        self.last_error = last_error
+        super().__init__(f"{step_name} failed after retries: {last_error}")
 
 
 class QueryCompiler:
@@ -54,24 +72,43 @@ class QueryCompiler:
         # Not part of the Problem Spec (contract §4 — computed query anchors,
         # consumed by the downstream retrieval layer / Module 1).
         self.hyde_embeddings: dict[str, list[list[float]]] = {}
+        self._robustness = {
+            "retries": {"call1": 0, "call2": 0, "call3": 0, "call2prime": 0},
+            "degraded": [],
+        }
+
+    @property
+    def robustness_report(self) -> dict:
+        """Retry/degrade stats for the last compile() run."""
+        return self._robustness
 
     async def compile(self, raw_input: str) -> ProblemSpec:
         """Run the full compilation pipeline. At most 4 LLM calls."""
         self.dropped_records = []
         self.hyde_embeddings = {}
+        self._robustness = {
+            "retries": {"call1": 0, "call2": 0, "call3": 0, "call2prime": 0},
+            "degraded": [],
+        }
 
         # ── Call 1: decompose ──
-        c1_text, _ = await self._gateway.call(
-            build_call1_messages(raw_input), self._model, max_tokens=self._max_tokens,
-        )
-        sub_problems_raw = parse_call1_response(c1_text)
+        try:
+            sub_problems_raw = await self._call_and_parse(
+                lambda: build_call1_messages(raw_input),
+                parse_call1_response, step_name="call1",
+            )
+        except _StepFailed as e:
+            raise CompileError("Call 1 failed after retries") from e
 
         # ── Call 2: label + self-eval ──
-        c2_text, _ = await self._gateway.call(
-            build_call2_messages(sub_problems_raw, self._taxonomy),
-            self._model, max_tokens=self._max_tokens,
-        )
-        c2_results = parse_call2_response(c2_text)
+        try:
+            c2_results = await self._call_and_parse(
+                lambda: build_call2_messages(sub_problems_raw, self._taxonomy),
+                parse_call2_response, step_name="call2",
+            )
+        except _StepFailed:
+            c2_results = []
+            self._robustness["degraded"].append("call2")
 
         # Index raw sub-problems by id for merging
         raw_by_id = {sp["id"]: sp for sp in sub_problems_raw}
@@ -106,7 +143,12 @@ class QueryCompiler:
 
         # ── Call 3 + Call 2' (conditional, at most once, no recursion) ──
         if ambiguous:
-            passed.extend(await self._clarify_and_reeval(ambiguous))
+            try:
+                passed.extend(await self._clarify_and_reeval(ambiguous))
+            except _StepFailed:
+                self._robustness["degraded"].append("clarify")
+                # Clarify path failed: ambiguous items stay in dropped_records,
+                # main flow continues (no recover, no crash).
 
         # ── Embedding (optional) ──
         if self._embedding_model is not None:
@@ -116,13 +158,42 @@ class QueryCompiler:
 
         return ProblemSpec(raw_input=raw_input, domain="agentic_swe", sub_problems=passed)
 
+    async def _call_and_parse(
+        self,
+        build_messages_fn,
+        parser,
+        *,
+        step_name: str,
+        max_attempts: int = 2,
+    ):
+        """Call the LLM and parse; retry once on empty/malformed response.
+
+        Raises _StepFailed when all attempts are exhausted; the caller decides
+        how to degrade. Parsing stays strict — this only adds retry/None-guard.
+        """
+        last_err = None
+        for attempt in range(max_attempts):
+            content, _ = await self._gateway.call(
+                build_messages_fn(), self._model, max_tokens=self._max_tokens
+            )
+            try:
+                if not content or not content.strip():
+                    raise RetryableParseError(f"{step_name}: empty response")
+                return parser(content)
+            except ParseError as e:  # RetryableParseError is a subclass
+                last_err = e
+                if attempt + 1 < max_attempts:
+                    self._robustness["retries"][step_name] += 1
+                continue
+        raise _StepFailed(step_name, last_err)
+
     async def _clarify_and_reeval(self, ambiguous: list[dict]) -> list[SubProblem]:
         """Call 3 (disambiguate) + Call 2' (re-eval). At most once, no recursion."""
         # ── Call 3 ──
-        c3_text, _ = await self._gateway.call(
-            build_call3_messages(ambiguous), self._model, max_tokens=self._max_tokens,
+        c3_results = await self._call_and_parse(
+            lambda: build_call3_messages(ambiguous),
+            parse_call3_response, step_name="call3",
         )
-        c3_results = parse_call3_response(c3_text)
 
         # Flatten clarified sub-problems, track parent_id
         clarified_raw: list[dict] = []
@@ -137,11 +208,10 @@ class QueryCompiler:
             return []
 
         # ── Call 2' ──
-        c2p_text, _ = await self._gateway.call(
-            build_call2_prime_messages(clarified_raw, self._taxonomy),
-            self._model, max_tokens=self._max_tokens,
+        c2p_results = await self._call_and_parse(
+            lambda: build_call2_prime_messages(clarified_raw, self._taxonomy),
+            parse_call2_response, step_name="call2prime",
         )
-        c2p_results = parse_call2_response(c2p_text)
 
         clarified_by_id = {c["id"]: c for c in clarified_raw}
         recovered: list[SubProblem] = []

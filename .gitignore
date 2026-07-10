@@ -16,5 +16,10 @@ venv/
 docs/superpowers/reports/
 SWE轨迹优选器设计.md
 
+# Personal-use design artifacts (not for public repo)
+docs/diagrams/
+docs/architecture-talk-3min.md
+docs/architecture-uml.md
+
 # Large binary tool (re-downloadable from plantuml.com)
 plantuml.jar

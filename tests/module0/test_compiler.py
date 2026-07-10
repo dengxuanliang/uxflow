@@ -256,3 +256,132 @@ async def test_i1_dropped_records_reset_per_compile(taxonomy):
     compiler._gateway = gw2
     await compiler.compile("环境问题")
     assert len(compiler.dropped_records) == 0  # reset, not accumulated
+
+
+def test_compile_error_is_importable_and_is_exception():
+    from module0 import CompileError
+    assert issubclass(CompileError, Exception)
+
+
+_C2_OK = '''[{
+    "id": "p1",
+    "target_capability": ["valid_syntax_in_toolcall"],
+    "trajectory_signal": "observation 含 SyntaxError",
+    "hyde_positive": ["正例片段一,超过二十字符的假设轨迹", "正例片段二,超过二十字符的假设轨迹"],
+    "keywords": ["SyntaxError", "python"],
+    "structured_filters": {"languages": ["python"]},
+    "confidence": 0.92,
+    "route": "pass"
+}]'''
+
+_C1_OK = '{"sub_problems": [{"id": "p1", "raw_text": "写入py有语法错误", "failure_summary": "语法错误"}]}'
+
+
+async def test_call1_empty_then_retry_succeeds(taxonomy):
+    gw = FakeGateway([None, _C1_OK, _C2_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    assert len(spec.sub_problems) == 1
+    assert compiler.robustness_report["retries"]["call1"] == 1
+
+
+async def test_call1_hard_fail_raises_compile_error(taxonomy):
+    from module0 import CompileError
+    gw = FakeGateway([None, None])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    with pytest.raises(CompileError):
+        await compiler.compile("写入py文件有语法错误")
+
+
+async def test_call2_empty_then_retry_succeeds(taxonomy):
+    # Call 1 ok; Call 2 empty then valid.
+    gw = FakeGateway([_C1_OK, None, _C2_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    assert len(spec.sub_problems) == 1
+    assert compiler.robustness_report["retries"]["call2"] == 1
+
+
+async def test_call2_exhausted_degrades_to_empty_spec(taxonomy):
+    # Call 1 ok; Call 2 empty on both attempts → degrade, empty spec, no crash.
+    gw = FakeGateway([_C1_OK, None, None])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    assert spec.sub_problems == []
+    assert spec.domain == "agentic_swe"
+    assert "call2" in compiler.robustness_report["degraded"]
+
+
+# Call 2 that drops p1 as ambiguous (triggers Call 3 + Call 2').
+_C2_AMBIGUOUS = '''[{
+    "id": "p1",
+    "target_capability": ["valid_syntax_in_toolcall"],
+    "trajectory_signal": "含糊",
+    "hyde_positive": ["片段一超过二十字符的假设正例轨迹", "片段二超过二十字符的假设正例轨迹"],
+    "keywords": ["python"],
+    "structured_filters": {"languages": ["python"]},
+    "confidence": 0.3,
+    "route": "drop",
+    "drop_reason": "ambiguous"
+}]'''
+
+# Call 3 clarifies p1 into p1a.
+_C3_OK = '[{"original_id": "p1", "clarified": [{"id": "p1a", "raw_text": "澄清后的问题", "failure_summary": "澄清"}]}]'
+
+# Call 2' valid response recovering p1a.
+_C2P_OK = '''[{
+    "id": "p1a",
+    "target_capability": ["valid_syntax_in_toolcall"],
+    "trajectory_signal": "observation 含 SyntaxError",
+    "hyde_positive": ["片段一超过二十字符的假设正例轨迹", "片段二超过二十字符的假设正例轨迹"],
+    "keywords": ["SyntaxError"],
+    "structured_filters": {"languages": ["python"]},
+    "confidence": 0.9,
+    "route": "pass"
+}]'''
+
+# Call 2' response missing the required "route" field (the field the live LLM dropped).
+_C2P_MISSING_ROUTE = '''[{
+    "id": "p1a",
+    "target_capability": ["valid_syntax_in_toolcall"],
+    "trajectory_signal": "observation 含 SyntaxError",
+    "hyde_positive": ["片段一超过二十字符的假设正例轨迹", "片段二超过二十字符的假设正例轨迹"],
+    "keywords": ["SyntaxError"],
+    "structured_filters": {"languages": ["python"]},
+    "confidence": 0.9
+}]'''
+
+
+async def test_call2prime_missing_route_then_retry_succeeds(taxonomy):
+    gw = FakeGateway([_C1_OK, _C2_AMBIGUOUS, _C3_OK, _C2P_MISSING_ROUTE, _C2P_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("解题过程中途停止")
+    assert any(sp.id == "p1a" for sp in spec.sub_problems)
+    assert compiler.robustness_report["retries"]["call2prime"] == 1
+
+
+async def test_call2prime_exhausted_degrades_without_crash(taxonomy):
+    gw = FakeGateway([_C1_OK, _C2_AMBIGUOUS, _C3_OK, _C2P_MISSING_ROUTE, _C2P_MISSING_ROUTE])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("解题过程中途停止")
+    assert all(sp.id != "p1a" for sp in spec.sub_problems)
+    assert "clarify" in compiler.robustness_report["degraded"]
+
+
+async def test_bad_json_and_empty_both_retried(taxonomy):
+    # Call 2 returns non-JSON garbage first, then valid → should retry & succeed.
+    gw = FakeGateway([_C1_OK, "not json {{{", _C2_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    assert len(spec.sub_problems) == 1
+    assert compiler.robustness_report["retries"]["call2"] == 1
+
+
+async def test_happy_path_records_no_retries_no_degrade(taxonomy):
+    gw = FakeGateway([_C1_OK, _C2_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    assert len(spec.sub_problems) == 1
+    report = compiler.robustness_report
+    assert report["retries"] == {"call1": 0, "call2": 0, "call3": 0, "call2prime": 0}
+    assert report["degraded"] == []
