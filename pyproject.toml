@@ -10,7 +10,7 @@ authors = [{name = "dengxuanliang"}]
 dependencies = [
     "httpx>=0.27",
     "datasketch>=1.6",
-    "numpy",
+    "numpy>=1.24",
 ]
 
 [project.optional-dependencies]
@@ -23,7 +23,7 @@ Repository = "https://github.com/dengxuanliang/uxflow"
 Issues = "https://github.com/dengxuanliang/uxflow/issues"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
