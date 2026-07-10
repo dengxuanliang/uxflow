@@ -70,7 +70,6 @@ _CALL2_SYSTEM_WITH_TAXONOMY = """你是一个 SWE 问题分析专家。对每个
 字段（全部可选，无则设 null）：
 - languages: {languages_enum}
 - tools_used: {tools_enum}
-- min_turns: 整数 ≥1
 - has_verification_step: 布尔值
 
 ## 输出格式（严格 JSON 数组）
@@ -82,7 +81,7 @@ _CALL2_SYSTEM_WITH_TAXONOMY = """你是一个 SWE 问题分析专家。对每个
   "trajectory_signal": "在轨迹中应匹配什么模式",
   "hyde_positive": ["假设正例片段1(200-500token)", "假设正例片段2"],
   "keywords": ["关键词1", "关键词2"],
-  "structured_filters": {{"languages": ["python"], "min_turns": 3, ...}},
+  "structured_filters": {{"languages": ["python"], ...}},
   "confidence": 0.0-1.0,
   "route": "pass" 或 "drop",
   "drop_reason": "ambiguous|not_applicable|label_diverged|other（仅 route==drop 时填）",
@@ -139,7 +138,6 @@ _CALL2_SYSTEM_EMPTY_TAXONOMY = """你是一个 SWE 问题分析专家。对每�
 字段（全部可选，无则设 null）：
 - languages: {languages_enum}
 - tools_used: {tools_enum}
-- min_turns: 整数 ≥1
 - has_verification_step: 布尔值
 
 ## 输出格式（严格 JSON 数组）
@@ -151,7 +149,7 @@ _CALL2_SYSTEM_EMPTY_TAXONOMY = """你是一个 SWE 问题分析专家。对每�
   "trajectory_signal": "在轨迹中应匹配什么模式",
   "hyde_positive": ["假设正例片段1(200-500token)", "假设正例片段2"],
   "keywords": ["关键词1", "关键词2"],
-  "structured_filters": {{"languages": ["python"], "min_turns": 3, ...}},
+  "structured_filters": {{"languages": ["python"], ...}},
   "confidence": 0.0-1.0,
   "route": "pass" 或 "drop",
   "drop_reason": "ambiguous|not_applicable|label_diverged|other（仅 route==drop 时填）",

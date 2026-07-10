@@ -70,22 +70,6 @@ def test_filter_tools_used():
     assert "t2" not in traj_ids
 
 
-def test_filter_min_turns():
-    idx = MemoryIndex()
-    idx.add(_make_sig("t1", turn_count=3))
-    idx.add(_make_sig("t2", turn_count=1))
-
-    results = idx.recall(
-        structured_filters={"min_turns": 2},
-        keywords=[],
-        query_embeddings=[],
-        top_n=10,
-    )
-    traj_ids = [r.signature.trajectory_id for r in results]
-    assert "t1" in traj_ids
-    assert "t2" not in traj_ids
-
-
 def test_filter_has_verification_step():
     idx = MemoryIndex()
     idx.add(_make_sig("t1", has_verification_step=True))
@@ -211,7 +195,7 @@ def test_null_filters_skip_filtering():
     idx.add(_make_sig("t2", languages=["java"], turn_count=5))
 
     results = idx.recall(
-        structured_filters={"languages": None, "min_turns": None},
+        structured_filters={"languages": None},
         keywords=[],
         query_embeddings=[],
         top_n=10,
