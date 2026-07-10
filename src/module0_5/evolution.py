@@ -55,6 +55,9 @@ def resolve_proposal(
     if best_dup is not None and best_dup_sim > dedup_threshold:
         return ProposalResolution(kind="duplicate", maps_to=best_dup.label)
 
+    # NOTE: dedup scans ALL labels but mount scans only roots (parent is None).
+    # Correct for the current two-level taxonomy where roots ARE the parents;
+    # revisit this population split if the taxonomy grows deeper.
     roots = [lbl for lbl in existing if lbl.parent is None]
     best_root, best_root_sim = None, -1.0
     for root in roots:

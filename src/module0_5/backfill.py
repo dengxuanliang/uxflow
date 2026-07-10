@@ -66,6 +66,11 @@ async def run_backfill(
         return BackfillResult(label=label, candidates_screened=len(slices),
                               judged_true=0, slices_written=0, errors=[f"judge: {e}"])
 
+    if len(results) != len(slices):
+        errors.append(
+            f"judge returned {len(results)} results for {len(slices)} slices"
+        )
+
     judged_true = 0
     written = 0
     for sig, res in zip(candidates, results):
