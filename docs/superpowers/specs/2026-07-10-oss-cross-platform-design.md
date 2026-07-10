@@ -46,8 +46,10 @@
 
 ### 3.1 协议（事实接口极小，探查确认全库只用这些）
 
+**放置位置（已定）**：新建独立包 `src/uxflow_embed/`。embedder 是全项目横切依赖（module0/1 都用），放进任一现有模块目录会造成错误的依赖方向（如 module1 为拿 embedder 反向 import module0）。独立成包让各模块平等依赖它，与「llm_gateway 目录不改」不冲突（新增≠改动，爆炸半径为零）。
+
 ```python
-# src/uxflow_embed/protocol.py（命名实现时可调）
+# src/uxflow_embed/protocol.py
 @runtime_checkable
 class Embedder(Protocol):
     @property
@@ -173,8 +175,8 @@ steps:
 | 文件 | 内容 |
 |------|------|
 | `LICENSE` | Apache-2.0 全文 |
-| `README.md` | 项目定位、**源码安装指引**（clone + `uv sync` / `pip install -e .`，含 `[local-embed]` 分层）、快速上手、跨平台矩阵（Linux/macOS × 3.11-3.13；Windows 未测）、架构图链接。英文为主 |
-| `CONTRIBUTING.md` | 开发环境（`uv sync --extra dev`）、测试约定（`requires_model` marker、纯逻辑测试注入 Fake）、代码风格（ruff）、PR 流程 |
+| `README.md` | 项目定位、**源码安装指引**（clone + `uv sync` / `pip install -e .`，含 `[local-embed]` 分层）、快速上手、跨平台矩阵（Linux/macOS × 3.11-3.13；Windows 未测）、架构图链接。**中英双语**（`README.md` 英文 + `README.zh-CN.md` 中文，见 §10.2） |
+| `CONTRIBUTING.md` | 开发环境（`uv sync --extra dev`）、测试约定（`requires_model` marker、纯逻辑测试注入 Fake）、代码风格（ruff）、PR 流程。**中英双语**（同 README） |
 | `pyproject.toml` 元数据 | `authors` / `urls` / `readme`（GitHub 场景无需 PyPI 专用 classifiers，精简即可） |
 | `.github/workflows/ci.yml` | §6.2 矩阵 |
 
