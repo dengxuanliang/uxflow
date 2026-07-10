@@ -50,7 +50,9 @@ The core install carries no ML dependencies: use `ApiEmbedder` (remote endpoint)
 
 ```bash
 uv run pytest -m "not requires_model"   # pure-logic, no ML deps
-uv run pytest                           # full suite (needs local-embed)
+
+uv sync --extra local-embed             # needed for the full suite
+uv run pytest                           # full suite (loads the Qwen model)
 ```
 
 The `-m "not requires_model"` subset runs pure logic with zero ML dependencies. The full suite requires the `local-embed` extra and downloads the Qwen model.

@@ -50,7 +50,9 @@ uv sync --extra local-embed    # or: pip install -e ".[local-embed]"
 
 ```bash
 uv run pytest -m "not requires_model"   # pure-logic, no ML deps
-uv run pytest                           # full suite (needs local-embed)
+
+uv sync --extra local-embed             # 运行完整套件前需先安装
+uv run pytest                           # full suite (loads the Qwen model)
 ```
 
 `-m "not requires_model"` 子集运行纯逻辑,零 ML 依赖。完整套件需要 `local-embed` extra 并会下载 Qwen 模型。
