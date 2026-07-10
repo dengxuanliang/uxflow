@@ -4,7 +4,10 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from module0.taxonomy import Taxonomy
+from module1.store import RecallHit
 
 __all__ = ["rerank_with_inheritance"]
 
@@ -16,6 +19,8 @@ def _family(target_label: str, taxonomy: Taxonomy) -> set[str]:
         return set()
     parent = target.parent
     fam = {parent}
+    # NOTE: current taxonomy is two-level, so same-parent labels ARE leaves.
+    # For deeper trees, filter siblings to leaves (Taxonomy.leaf_labels()).
     for lbl in taxonomy.labels:
         if lbl.parent == parent:
             fam.add(lbl.label)
@@ -24,19 +29,20 @@ def _family(target_label: str, taxonomy: Taxonomy) -> set[str]:
 
 
 def rerank_with_inheritance(
-    hits: list,
+    hits: list[RecallHit],
     *,
     target_label: str,
     taxonomy: Taxonomy,
     exact_weight: float = 1.0,
     inherited_weight: float = 0.3,   # 契约 §5.3
-) -> list:
+) -> list[RecallHit]:
     """对已召回候选按 capability_labels + taxonomy 树加权重排。零 LLM。
 
     切片含 target_label 本身 → ×exact_weight；
     含 target 的父/兄弟叶子 → ×inherited_weight；
     都不含 → ×1.0（不加成不惩罚，仅靠召回分）。
     权重作用在 hit.rrf_score 上，重排后按加权分降序返回。
+    纯函数：不修改入参，返回 replace() 出的新 hit。
     """
     family = _family(target_label, taxonomy)
     rescored = []
@@ -48,7 +54,6 @@ def rerank_with_inheritance(
             weight = inherited_weight
         else:
             weight = 1.0
-        hit.rrf_score = hit.rrf_score * weight
-        rescored.append(hit)
+        rescored.append(replace(hit, rrf_score=hit.rrf_score * weight))
     rescored.sort(key=lambda h: h.rrf_score, reverse=True)
     return rescored
