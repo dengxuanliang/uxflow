@@ -44,7 +44,7 @@ class CompileError(Exception):
     """Raised when compilation cannot proceed (Call 1 failed after retries)."""
 
 
-class RetryableParseError(Exception):
+class RetryableParseError(ParseError):
     """Internal signal: this step should be retried (empty response)."""
 
 
@@ -98,7 +98,7 @@ class QueryCompiler:
                 parse_call1_response, step_name="call1",
             )
         except _StepFailed as e:
-            raise CompileError(f"Call 1 failed after retries: {e}") from e
+            raise CompileError("Call 1 failed after retries") from e
 
         # ── Call 2: label + self-eval ──
         c2_text, _ = await self._gateway.call(
@@ -150,7 +150,14 @@ class QueryCompiler:
 
         return ProblemSpec(raw_input=raw_input, domain="agentic_swe", sub_problems=passed)
 
-    async def _call_and_parse(self, build_messages_fn, parser, *, step_name, max_attempts=2):
+    async def _call_and_parse(
+        self,
+        build_messages_fn,
+        parser,
+        *,
+        step_name: str,
+        max_attempts: int = 2,
+    ):
         """Call the LLM and parse; retry once on empty/malformed response.
 
         Raises _StepFailed when all attempts are exhausted; the caller decides
