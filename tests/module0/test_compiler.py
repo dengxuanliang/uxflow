@@ -94,7 +94,7 @@ async def test_ambiguous_triggers_clarification(taxonomy):
     call2prime_resp = '''[
         {"id": "p12a", "target_capability": ["persist_through_truncation"], "trajectory_signal": "末轮命中 max_turns",
          "hyde_positive": ["hyp padding one text", "hyp padding two text"], "keywords": ["max_turns"],
-         "structured_filters": {"min_turns": 5}, "confidence": 0.84, "route": "pass"},
+         "structured_filters": {}, "confidence": 0.84, "route": "pass"},
         {"id": "p12b", "target_capability": ["x"], "trajectory_signal": "s",
          "hyde_positive": ["hyp padding one text", "hyp padding two text"], "keywords": ["k"],
          "structured_filters": {}, "confidence": 0.60, "route": "pass"}

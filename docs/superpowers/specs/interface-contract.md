@@ -61,7 +61,6 @@
 {
   "languages": string[] | null,             // 可选。枚举值见 §2.1
   "tools_used": string[] | null,            // 可选。枚举值见 §2.2
-  "min_turns": integer | null,              // 可选。最小轮次数，≥1
   "has_verification_step": boolean | null   // 可选。是否要求含验证步骤
 }
 ```
@@ -108,16 +107,7 @@
 
 > **已移除**（2026-07-08）。成功/失败判定改由模块 1 Phase 4 LLM 精判承担，不再作为签名层的结构化过滤字段。
 > **理由**：轨迹无结构化 exit code，从 tool_result 文本推断成功/失败成本高且不可靠；LLM 精判天然覆盖"是否正向演示能力"的判断，包含成功与否。
-> 保留 §2.4 / §2.5 编号不变，避免引用连锁改动。
-
-### 2.4 min_turns
-
-| 契约 | 说明 |
-|------|------|
-| 字段名 | `min_turns` |
-| 类型 | `integer` |
-| 来源（模块 1 侧） | 切片签名免费层 A 组 `turn_count` 字段 |
-| 匹配语义 | `turn_count >= min_turns` |
+> 保留 §2.5 编号不变，避免引用连锁改动。
 
 ### 2.5 has_verification_step
 

@@ -17,6 +17,11 @@ import pathlib
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
 
+# Default the local embedding model to offline: the model is expected to be
+# cached locally for this script, and the HF metadata check can stall on a
+# flaky network. Users can override by exporting HF_HUB_OFFLINE=0.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+
 from llm_gateway import LLMGateway, GatewayConfig  # noqa: E402  (import after load_dotenv)
 from module0 import QueryCompiler, Taxonomy  # noqa: E402
 from module0.embedding import EmbeddingModel  # noqa: E402
@@ -47,7 +52,6 @@ def _spec_to_dict(spec) -> dict:
                 "structured_filters": {
                     "languages": sp.structured_filters.languages,
                     "tools_used": sp.structured_filters.tools_used,
-                    "min_turns": sp.structured_filters.min_turns,
                     "has_verification_step": sp.structured_filters.has_verification_step,
                 },
                 "confidence": sp.confidence,
@@ -72,7 +76,8 @@ async def main():
     root = pathlib.Path(__file__).parent.parent
 
     taxonomy_path = root / "fixtures" / "taxonomy_v0.json"
-    trajectories_path = root / "fixtures" / "trajectories" / "sample_01.jsonl"
+    traj_name = sys.argv[2] if len(sys.argv) > 2 else "sample_01.jsonl"
+    trajectories_path = root / "fixtures" / "trajectories" / traj_name
 
     # ── 1. Load embedding model ──────────────────────────────────────────
     print("⏳ 加载 embedding 模型 (Qwen3-Embedding-0.6B)...")
@@ -108,7 +113,6 @@ async def main():
             sf = sp.structured_filters
             print(f"    structured_filters: languages={sf.languages}, "
                   f"tools_used={sf.tools_used}, "
-                  f"min_turns={sf.min_turns}, "
                   f"has_verification_step={sf.has_verification_step}")
 
         if compiler.dropped_records:
@@ -191,19 +195,9 @@ async def main():
                     test_filter = {fname: fval}
                     n = len(pipeline._store._apply_filters(test_filter))
                     print(f"    单独 {fname}={fval} → {n}/{pipeline._store.size} 通过")
-                # Relax: drop min_turns filter and retry to exercise full pipeline
-                sf_relaxed = {k: (None if k == "min_turns" else v) for k, v in sf.items()}
-                filter_relaxed = pipeline._store._apply_filters(sf_relaxed)
-                if filter_relaxed:
-                    print(f"  → 放宽 min_turns 后: {len(filter_relaxed)} 条通过，"
-                          "继续跑 BM25/向量/judge（仅为观测）")
-                    sf = sf_relaxed
-                    sp_dict = {**sp_dict, "structured_filters": sf}
-                    filter_passed = filter_relaxed
-                else:
-                    print("  ⚠️  即使放宽 min_turns 仍无候选，跳过")
-                    print()
-                    continue
+                print("  ⚠️  结构化过滤后无候选，跳过")
+                print()
+                continue
 
             # Show BM25 + vector scores for transparency
             bm25_scores = pipeline._store._bm25_score(filter_passed, kw) if kw else {}

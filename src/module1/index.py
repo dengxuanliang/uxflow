@@ -10,7 +10,7 @@ vectors in _vector_score. Not needed for V1: vectors are computed on the fly
 from a single EmbeddingModel, so query and index dimensions always match.
 
 Recall pipeline:
-  1. Structured filters (languages, tools_used, min_turns, has_verification_step)
+  1. Structured filters (languages, tools_used, has_verification_step)
   2. BM25 scoring (TF-IDF on bm25_tokens)
   3. Vector cosine similarity (numpy)
   4. RRF fusion → top-N
@@ -62,7 +62,7 @@ class MemoryIndex:
 
         Args:
             structured_filters: dict with optional keys: languages, tools_used,
-                min_turns, has_verification_step. None values are skipped.
+                has_verification_step. None values are skipped.
             keywords: BM25 query terms.
             query_embeddings: list of query vectors (one per hyde_positive segment).
                 Cosine similarity uses max across segments.
@@ -132,7 +132,6 @@ class MemoryIndex:
         result = []
         languages = filters.get("languages")
         tools_used = filters.get("tools_used")
-        min_turns = filters.get("min_turns")
         has_verify = filters.get("has_verification_step")
 
         for sig in self._signatures:
@@ -143,10 +142,6 @@ class MemoryIndex:
             # tools_used: intersection non-empty (OR)
             if tools_used is not None:
                 if not set(sig.tools_used) & set(tools_used):
-                    continue
-            # min_turns: turn_count >= min_turns
-            if min_turns is not None:
-                if sig.turn_count < min_turns:
                     continue
             # has_verification_step: exact match
             if has_verify is not None:

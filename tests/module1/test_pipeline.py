@@ -42,7 +42,6 @@ def problem_spec_dict():
                 "structured_filters": {
                     "languages": ["python"],
                     "tools_used": ["Write", "Edit"],
-                    "min_turns": None,
                     "has_verification_step": None,
                 },
                 "confidence": 0.92,

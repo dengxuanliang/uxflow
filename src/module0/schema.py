@@ -39,10 +39,9 @@ DROP_REASONS = frozenset([
 
 @dataclass
 class StructuredFilters:
-    """契约 §1.3 StructuredFilters — 4 fields, all optional."""
+    """契约 §1.3 StructuredFilters — 3 fields, all optional."""
     languages: list[str] | None = None
     tools_used: list[str] | None = None
-    min_turns: int | None = None
     has_verification_step: bool | None = None
 
     def __post_init__(self):
@@ -54,8 +53,6 @@ class StructuredFilters:
             for v in self.tools_used:
                 if v not in TOOLS_USED:
                     raise ValueError(f"tools_used: invalid value '{v}'. Must be one of {sorted(TOOLS_USED)}")
-        if self.min_turns is not None and self.min_turns < 1:
-            raise ValueError("min_turns must be >= 1")
 
 
 @dataclass
@@ -132,7 +129,6 @@ def _parse_structured_filters(d: dict | None) -> StructuredFilters:
     return StructuredFilters(
         languages=d.get("languages"),
         tools_used=d.get("tools_used"),
-        min_turns=d.get("min_turns"),
         has_verification_step=d.get("has_verification_step"),
     )
 
