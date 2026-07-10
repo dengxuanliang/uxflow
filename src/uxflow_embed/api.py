@@ -42,6 +42,15 @@ class ApiEmbedder:
             transport=transport,
         )
 
+    def close(self) -> None:
+        self._client.close()
+
+    def __enter__(self) -> "ApiEmbedder":
+        return self
+
+    def __exit__(self, *exc) -> None:
+        self.close()
+
     @property
     def dimension(self) -> int:
         return self._dimension
@@ -55,9 +64,9 @@ class ApiEmbedder:
         resp = self._client.post(self._url, json={"model": self._model, "input": texts})
         resp.raise_for_status()
         rows = sorted(resp.json()["data"], key=lambda d: d["index"])
-        return [self._normalize(r["embedding"]) for r in rows]
+        return [self._ensure_dimension(r["embedding"]) for r in rows]
 
-    def _normalize(self, raw: list[float]) -> list[float]:
+    def _ensure_dimension(self, raw: list[float]) -> list[float]:
         vec = np.asarray(raw, dtype=np.float32)
         if len(vec) >= self._dimension:
             vec = vec[: self._dimension]
