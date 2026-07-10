@@ -4,6 +4,8 @@ GatewayConfig field names and defaults align with sft-label's PipelineConfig
 (the LLM-relevant subset). resolve_httpx_connection_limits is lifted from
 sft-label's http_limits.py.
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

@@ -17,13 +17,13 @@ import pathlib
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
 
-from llm_gateway import LLMGateway, GatewayConfig
-from module0 import QueryCompiler, Taxonomy
-from module0.embedding import EmbeddingModel
-from module1.pipeline import TrajectoryPipeline, PipelineConfig
-from module3.compose import GeneralDataConfig
-from module3.pipeline import select_final_dataset
-from module3.selection import SelectionConfig
+from llm_gateway import LLMGateway, GatewayConfig  # noqa: E402  (import after load_dotenv)
+from module0 import QueryCompiler, Taxonomy  # noqa: E402
+from module0.embedding import EmbeddingModel  # noqa: E402
+from module1.pipeline import TrajectoryPipeline, PipelineConfig  # noqa: E402
+from module3.compose import GeneralDataConfig  # noqa: E402
+from module3.pipeline import select_final_dataset  # noqa: E402
+from module3.selection import SelectionConfig  # noqa: E402
 
 
 # ─── Helpers ────────────────────────────────────────────────────────────────

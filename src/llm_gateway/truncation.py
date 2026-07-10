@@ -7,6 +7,8 @@ middle turns share the remainder.
 
 Token estimation: len(text) // 4 (fast, no external dependency).
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

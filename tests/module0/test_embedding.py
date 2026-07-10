@@ -7,13 +7,16 @@ the Qwen3-Embedding model downloaded (~1.2GB). Skip if unavailable.
 import pytest
 
 try:
-    import torch
-    import sentence_transformers
+    import torch  # noqa: F401  (availability probe for HAS_DEPS)
+    import sentence_transformers  # noqa: F401  (availability probe for HAS_DEPS)
     HAS_DEPS = True
 except ImportError:
     HAS_DEPS = False
 
-pytestmark = pytest.mark.skipif(not HAS_DEPS, reason="sentence-transformers/torch not installed")
+pytestmark = [
+    pytest.mark.requires_model,
+    pytest.mark.skipif(not HAS_DEPS, reason="sentence-transformers/torch not installed"),
+]
 
 
 @pytest.fixture(scope="module")

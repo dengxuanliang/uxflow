@@ -19,8 +19,8 @@ import pytest
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).parent.parent.parent / ".env")
 
-from llm_gateway import LLMGateway, GatewayConfig
-from module0 import QueryCompiler, Taxonomy
+from llm_gateway import LLMGateway, GatewayConfig  # noqa: E402  (import after load_dotenv)
+from module0 import QueryCompiler, Taxonomy  # noqa: E402
 
 pytestmark = pytest.mark.skipif(
     not os.environ.get("MODULE0_INTEGRATION"),
@@ -70,6 +70,7 @@ async def test_end_to_end_ambiguous(taxonomy):
                 assert sp.parent_id is not None
 
 
+@pytest.mark.requires_model
 async def test_embedding_integration(taxonomy):
     """Real LLM + real embedding model end-to-end."""
     from module0.embedding import EmbeddingModel

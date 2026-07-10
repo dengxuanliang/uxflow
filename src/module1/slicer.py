@@ -8,6 +8,8 @@ Boundary signals (spec §2.2):
 
 Algorithm: greedy split at highest-scoring boundary every 5-10 steps.
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

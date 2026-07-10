@@ -13,6 +13,8 @@ Ported from sft-label's ``async_llm_call`` with these deliberate changes:
 The markdown-fence stripper is retained as a pure text operation applied to the
 content string (state-machine, no regex).
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

@@ -1,4 +1,6 @@
 """Module 2 output model: slice-level scored candidate."""
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

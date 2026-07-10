@@ -5,7 +5,6 @@ import httpx
 import pytest
 
 from llm_gateway import LLMGateway, GatewayConfig
-from llm_gateway.outcomes import OutcomeClass
 
 # Capture the real AsyncClient before any test patches
 # ``llm_gateway.gateway.httpx.AsyncClient`` (which is the shared httpx module

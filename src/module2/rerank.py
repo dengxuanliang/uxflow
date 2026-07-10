@@ -1,4 +1,6 @@
 """Module 2: relevance re-ranking with soft label scoring."""
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

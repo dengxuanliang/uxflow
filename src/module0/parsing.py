@@ -4,6 +4,8 @@ Handles: markdown fence stripping, JSON extraction, field validation,
 and graceful error reporting. Does NOT do schema-level validation
 (SubProblem/StructuredFilters) — that's compiler.py's job.
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

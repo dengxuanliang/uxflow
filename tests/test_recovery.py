@@ -1,7 +1,6 @@
 import asyncio
 
 import httpx
-import pytest
 
 from llm_gateway.recovery import SwappableAsyncClient, transport_recovery_loop
 

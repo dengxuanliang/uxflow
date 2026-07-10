@@ -3,6 +3,8 @@
 Flow: load trajectories → slice → extract signatures → build index →
 for each ProblemSpec sub_problem: recall → judge → collect SFTCandidates.
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

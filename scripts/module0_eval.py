@@ -14,16 +14,15 @@ import asyncio
 import json
 import os
 import pathlib
-import sys
 import time
 from collections import defaultdict
 
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
 
-from llm_gateway import LLMGateway, GatewayConfig
-from module0 import QueryCompiler, Taxonomy
-from module0.parsing import ParseError
+from llm_gateway import LLMGateway, GatewayConfig  # noqa: E402  (import after load_dotenv)
+from module0 import QueryCompiler, Taxonomy  # noqa: E402
+from module0.parsing import ParseError  # noqa: E402
 
 FIXTURES_DIR = pathlib.Path(__file__).parent.parent / "fixtures"
 GOLDEN_SET_PATH = FIXTURES_DIR / "golden_eval_set.json"

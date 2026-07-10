@@ -8,6 +8,8 @@ Truncation limits (spec §5):
   - tool_call args: first 200 chars
   - tool_result: first 300 chars
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

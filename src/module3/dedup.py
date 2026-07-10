@@ -1,4 +1,6 @@
 """Module 3 semantic and token-level deduplication."""
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

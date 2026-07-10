@@ -42,7 +42,6 @@ def test_sft_candidate():
 
 
 def test_signature_capability_labels_defaults_none():
-    from module1.models import TrajectorySignature
     sig = TrajectorySignature(
         trajectory_id="t1", slice_index=0, step_range=(0, 5), step_count=6,
         turn_count=1, languages=["python"], tools_used=["Bash"],

@@ -1,4 +1,6 @@
 """Data models for the trajectory pipeline."""
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 from dataclasses import dataclass, field

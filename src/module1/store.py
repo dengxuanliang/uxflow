@@ -1,4 +1,6 @@
 """Storage abstraction shared by modules 2/3/0.5."""
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 

@@ -9,6 +9,8 @@ Key invariants:
 - DynamicConcurrencyGate._background_tasks keeps strong refs to fire-and-forget
   tasks so GC cannot collect them mid-flight.
 """
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 
@@ -16,7 +18,7 @@ import asyncio
 import math
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from llm_gateway.outcomes import OutcomeClass, RequestOutcome
 

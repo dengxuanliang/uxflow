@@ -1,5 +1,4 @@
 import httpx
-import pytest
 
 from llm_gateway.config import GatewayConfig
 from llm_gateway.transport import async_llm_call, RequestStats

@@ -1,4 +1,6 @@
 """Module 3 submodular-style coverage selection."""
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 dengxuanliang
 
 from __future__ import annotations
 
