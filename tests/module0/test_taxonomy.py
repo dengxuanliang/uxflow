@@ -1,4 +1,3 @@
-import pytest
 from module0.taxonomy import Taxonomy
 
 
@@ -12,7 +11,7 @@ def test_leaf_labels(taxonomy_v0_path):
     t = Taxonomy.load(taxonomy_v0_path)
     leaves = t.leaf_labels()
     assert len(leaves) == 11
-    assert "valid_syntax_in_toolcall" in [l.label for l in leaves]
+    assert "valid_syntax_in_toolcall" in [lbl.label for lbl in leaves]
 
 
 def test_get_label(taxonomy_v0_path):

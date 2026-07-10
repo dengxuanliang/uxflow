@@ -39,7 +39,7 @@ class Taxonomy:
         self.version = version
         self.updated_at = updated_at
         self.labels = labels
-        self._by_name: dict[str, TaxonomyLabel] = {l.label: l for l in labels}
+        self._by_name: dict[str, TaxonomyLabel] = {lbl.label: lbl for lbl in labels}
 
     @classmethod
     def load(cls, path: str | pathlib.Path) -> "Taxonomy":
@@ -76,8 +76,8 @@ class Taxonomy:
 
     def leaf_labels(self) -> list[TaxonomyLabel]:
         """Labels that are not parent of any other label."""
-        parents = {l.parent for l in self.labels if l.parent}
-        return [l for l in self.labels if l.label not in parents]
+        parents = {lbl.parent for lbl in self.labels if lbl.parent}
+        return [lbl for lbl in self.labels if lbl.label not in parents]
 
     def to_prompt_text(self) -> str:
         """Generate indented tree text for LLM prompt injection.
@@ -91,8 +91,8 @@ class Taxonomy:
 
         # Group children by parent
         children: dict[str | None, list[TaxonomyLabel]] = {}
-        for l in self.labels:
-            children.setdefault(l.parent, []).append(l)
+        for lbl in self.labels:
+            children.setdefault(lbl.parent, []).append(lbl)
 
         lines = []
         for root in children.get(None, []):

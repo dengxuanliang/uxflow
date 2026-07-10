@@ -1,5 +1,4 @@
-import pytest
-from module1.models import Step, Slice, JudgeResult
+from module1.models import Step, Slice
 from module1.judge import Judge, _build_judge_prompt, _parse_judge_response
 
 

@@ -14,8 +14,8 @@ import pathlib
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
 
-from llm_gateway import LLMGateway, GatewayConfig
-from module0 import QueryCompiler, Taxonomy
+from llm_gateway import LLMGateway, GatewayConfig  # noqa: E402  (import after load_dotenv)
+from module0 import QueryCompiler, Taxonomy  # noqa: E402
 
 
 async def main():

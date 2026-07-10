@@ -1,4 +1,4 @@
-from module1.models import Step, Trajectory, Slice
+from module1.models import Step, Trajectory
 from module1.slicer import slice_trajectory
 
 STEP_THRESHOLD = 10

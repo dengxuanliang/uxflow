@@ -205,7 +205,7 @@ async def test_c2_invalid_drop_reason_falls_back_to_other(taxonomy):
     gw = FakeGateway([call1_resp, call2_resp])
     compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
 
-    spec = await compiler.compile("问题")
+    await compiler.compile("问题")
     assert len(compiler.dropped_records) == 1
     assert compiler.dropped_records[0].drop_reason == "other"
 

@@ -1,6 +1,5 @@
 import pytest
 from module0.schema import (
-    ProblemSpec,
     SubProblem,
     StructuredFilters,
     DroppedSubProblem,

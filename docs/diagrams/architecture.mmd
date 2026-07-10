@@ -1,0 +1,77 @@
+flowchart LR
+    user([用户自然语言<br/>问题描述])
+
+    %% ===== 支撑模块（置于主链路上方，不参与左右主序）=====
+    subgraph TAX["🏷️ 共享 Taxonomy"]
+        taxonomy["Taxonomy 只读视图<br/>TaxonomyLabel[]"]
+    end
+    subgraph M05["🧬 模块 0.5 · 标签系统演化 — 设计未实现"]
+        direction LR
+        evo["① 提议捕获 + ② 去重挂载<br/>evolution.py"]
+        taxstore["TaxonomyStore<br/>可变写回"]
+        inh["③ 继承降权查询<br/>inheritance.py ×0.3"]
+        bf["④ 异步回填 backfill.py<br/>粗筛→LLM精判→写回"]
+        evo -->|入库 v+1| taxstore
+        evo ==>|新标签就绪| inh
+        inh ==>|过渡→精确| bf
+    end
+    subgraph GW["🔌 LLM Gateway"]
+        gwcore["LLMGateway<br/>transport · runtime<br/>recovery · truncation · outcomes"]
+    end
+
+    %% ===== 主链路（严格左→右：0 → 1 → 2 → 3）=====
+    subgraph M0["📥 模块 0 · 问题清单编译"]
+        direction TB
+        compiler["QueryCompiler<br/>.compile()"]
+        prompts0["prompts / parsing"]
+        emb0["EmbeddingModel<br/>Qwen3-Embedding 1024d"]
+        compiler --> prompts0
+        compiler --> emb0
+    end
+    subgraph M1["🗂️ 模块 1 · 轨迹离线处理"]
+        direction TB
+        loader["loader 解析"] --> slicer["slicer 切片"]
+        slicer --> sig["signature 抽签名<br/>+ summarizer"]
+        sig --> store["MemoryIndex ⟵impl⟶ SliceStore<br/>add_batch / recall /<br/>get_slice / update_labels"]
+        store --> pipe1["TrajectoryPipeline<br/>.run_scored()"]
+        pipe1 --> judge["Judge.judge_batch()<br/>match / confidence /<br/>loss_mask_spans"]
+    end
+    subgraph M2["⚖️ 模块 2 · 相关性精排"]
+        rerank["rerank() 软加分<br/>relevance =<br/>rrf ×(match?1.0:0.3)"]
+    end
+    subgraph M3["🎯 模块 3 · 集合优选"]
+        direction TB
+        dedup["dedup 语义去重<br/>MinHash + cosine>0.95"]
+        sel["selection submodular<br/>facility location 贪心"]
+        comp["compose 配比<br/>+ 通用数据钩子"]
+        dedup --> sel --> comp
+    end
+    sft([最终 SFT<br/>数据集 · N 条])
+
+    %% ===== 主数据流（粗实线，左→右）=====
+    user -->|raw_input| compiler
+    compiler -->|"ProblemSpec<br/>SubProblem[] + Filters"| pipe1
+    judge -->|"recalled_hits<br/>+ judge_results"| rerank
+    rerank -->|"ScoredCandidate[]<br/>切片级 top-N"| dedup
+    comp -->|"targeted 70-80%<br/>+ 通用 20-30%"| sft
+    store -->|"RecallHit<br/>sig + rrf_score"| pipe1
+
+    %% ===== 支撑依赖（虚线，自上而下汇入主链路）=====
+    compiler -.->|hyde_embeddings| pipe1
+    compiler -.->|"label_proposals<br/>side-channel"| evo
+    taxonomy -.->|注入| compiler
+    taxonomy -.->|标签树注入| judge
+    inh -.->|"继承融合 父标签×0.3"| store
+    bf -.->|"update_labels 回写"| store
+    compiler -.->|LLM 调用| gwcore
+    judge -.->|LLM 调用| gwcore
+    bf -.->|LLM 精判| gwcore
+
+    classDef done fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px;
+    classDef todo fill:#fff3e0,stroke:#ef6c00,stroke-width:2px,stroke-dasharray:5 4;
+    classDef infra fill:#e3f2fd,stroke:#1565c0,stroke-width:2px;
+    classDef shared fill:#f3e5f5,stroke:#6a1b9a,stroke-width:2px;
+    class M0,M1,M2,M3 done;
+    class M05 todo;
+    class GW infra;
+    class TAX shared;

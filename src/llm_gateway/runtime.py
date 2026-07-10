@@ -18,7 +18,7 @@ import asyncio
 import math
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from llm_gateway.outcomes import OutcomeClass, RequestOutcome
 

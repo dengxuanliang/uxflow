@@ -1,0 +1,8 @@
+{
+  "theme": "base",
+  "themeVariables": {
+    "fontSize": "22px",
+    "fontFamily": "PingFang SC, Helvetica, Arial, sans-serif"
+  },
+  "flowchart": { "nodeSpacing": 45, "rankSpacing": 60, "padding": 12 }
+}
