@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>轨迹 Inspector</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>轨迹 Inspector</h1>
+    <div class="uploads">
+      <label>用户清单(.txt)：<input type="file" id="manifest" accept=".txt"></label>
+      <label>候选回流(.jsonl)：<input type="file" id="trajectories" accept=".jsonl"></label>
+      <button id="run">运行</button>
+      <label class="toggle"><input type="checkbox" id="show-all"> 显示全部能力</label>
+    </div>
+    <div id="manifest-summary" class="manifest"></div>
+  </header>
+
+  <div id="progress" class="progress hidden">
+    <p class="subtitle" id="progress-msg">先上传两个文件，点运行…</p>
+  </div>
+
+  <main id="workspace" class="split3 hidden">
+    <section id="col-problems" class="col">
+      <div class="label">问题 → 能力</div>
+      <div id="problems"></div>
+    </section>
+    <section id="col-hits" class="col">
+      <div class="label">命中轨迹</div>
+      <div id="hits"></div>
+    </section>
+    <section id="col-detail" class="col">
+      <div class="label">轨迹详情</div>
+      <div id="detail"></div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
