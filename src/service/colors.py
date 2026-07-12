@@ -7,7 +7,7 @@ from __future__ import annotations
 __all__ = ["PALETTE", "assign_colors"]
 
 # 继承 brainstorm mockup 的配色，扩展到 10 色调色板
-PALETTE = [
+PALETTE = (
     "#f5b800",  # 黄 (mockup valid_syntax)
     "#1c7ed6",  # 蓝 (mockup self_verification)
     "#37b24d",  # 绿
@@ -18,7 +18,7 @@ PALETTE = [
     "#4263eb",  # 靛
     "#f76707",  # 深橙
     "#66a80f",  # 橄榄
-]
+)
 
 
 def assign_colors(labels: list[str]) -> dict[str, str]:
