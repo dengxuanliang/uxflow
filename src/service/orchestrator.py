@@ -86,7 +86,8 @@ async def run_pipeline(
         spec_obj = await deps.compiler.compile(line)
         specs.append(_spec_to_dict(spec_obj, id_prefix=f"L{i + 1}."))
 
-    all_sub_ids = [sp["id"] for s in specs for sp in s["sub_problems"]]
+    all_sub_problems = [sp for s in specs for sp in s["sub_problems"]]
+    all_sub_ids = [sp["id"] for sp in all_sub_problems]
 
     # ── Module 1+2: recall + judge + soft-score ─────────────────────────
     emit({"stage": "module1", "status": "running", "msg": "切片+召回+精判..."})
@@ -99,6 +100,9 @@ async def run_pipeline(
     # ── Module 3: dedup + select ────────────────────────────────────────
     emit({"stage": "module3", "status": "running", "msg": "去重+集合优选..."})
     if selection_config is None or general_config is None:
+        # Lazy: keep the orchestrator free of a hard top-level module3 dependency
+        # (the DI seam decouples from concrete pipeline modules). Only the
+        # default-config convenience branch needs these.
         from module3.selection import SelectionConfig
         from module3.compose import GeneralDataConfig
         selection_config = selection_config or SelectionConfig(
@@ -114,10 +118,12 @@ async def run_pipeline(
     )
 
     # ── Aggregate view + trajectory index ───────────────────────────────
+    # viewmodel wants one flat spec; run_scored wants per-line specs — hence two shapes
     merged_spec = {
         "raw_input": "\n".join(manifest_lines),
+        # domain is view-cosmetic (build_inspector_view never reads it); fixed intentionally
         "domain": "agentic_swe",
-        "sub_problems": [sp for s in specs for sp in s["sub_problems"]],
+        "sub_problems": all_sub_problems,
     }
     view = build_inspector_view(
         run_id=run_id, spec=merged_spec, scored=scored, select_result=select_result
