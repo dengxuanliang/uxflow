@@ -64,7 +64,11 @@ class MemoryRunStore:
             loop = asyncio.get_running_loop()
             loop.create_task(_notify())
         except RuntimeError:
-            # No running loop (sync test context): subscribers not active.
+            # No running loop (sync context): subscribers, if any, still see the
+            # event within the subscribe() 0.5s poll. NOTE: a call from a worker
+            # thread (e.g. future run_in_executor producers) also lands here and
+            # silently skips notify — for off-loop producers, capture the loop at
+            # construction and use loop.call_soon_threadsafe instead.
             pass
 
     def events_snapshot(self, run_id: str) -> list[dict]:
@@ -122,6 +126,7 @@ class MemoryRunStore:
         try:
             asyncio.get_running_loop().create_task(_notify())
         except RuntimeError:
+            # See append_event: same off-loop / worker-thread caveat applies.
             pass
 
     def mark_done(self, run_id: str) -> None:
