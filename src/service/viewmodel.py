@@ -29,6 +29,9 @@ def build_inspector_view(
 
     Trajectory full text is NOT inlined here; the frontend lazy-loads it via
     /trajectory/{id}. See build_trajectory_index for that side channel.
+
+    `spec` must be the dict-serialized ProblemSpec (contract §1 shape), not the
+    module0 ProblemSpec dataclass — sub_problems are accessed as dicts here.
     """
     colors = assign_colors(_all_labels(spec))
 
