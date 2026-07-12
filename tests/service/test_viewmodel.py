@@ -49,16 +49,21 @@ def test_view_maps_problems_and_capabilities():
     p = view["problems"][0]
     assert p["id"] == "p1"
     assert p["failure_summary"].startswith("写入")
+    assert p["confidence"] == 0.9
     caps = {c["label"]: c for c in p["capabilities"]}
     assert set(caps) == {"valid_syntax_in_toolcall", "self_verification"}
     # 每个能力有稳定色
     assert caps["valid_syntax_in_toolcall"]["color"].startswith("#")
+    # taxonomy parent 富集为后续保留（spec §10）
+    assert caps["valid_syntax_in_toolcall"]["parent"] is None
     # 命中轨迹挂到对应能力下
     vs = caps["valid_syntax_in_toolcall"]
     assert vs["hit_count"] == 1
     hit = vs["hit_trajectories"][0]
     assert hit["trajectory_id"] == "t1"
     assert hit["slice_index"] == 0
+    assert hit["relevance_score"] == 0.8
+    assert hit["judge_confidence"] == 0.9
     assert hit["loss_mask_spans"] == [{"start_step": 1, "end_step": 2}]
     # self_verification 无命中
     assert caps["self_verification"]["hit_count"] == 0
@@ -81,6 +86,23 @@ def test_selected_flag_reflects_module3_targeted():
     by_traj = {h["trajectory_id"]: h for h in hits}
     assert by_traj["t1"]["selected"] is True
     assert by_traj["t2"]["selected"] is False
+
+
+def test_selected_keyed_on_slice_index_not_just_trajectory():
+    # 同 trajectory_id + 同 sub_problem_id，仅 slice_index 不同：
+    # 只有 slice 0 进 targeted，锁定 selected 按 3-tuple 键控而非 trajectory_id-only。
+    s0 = FakeScored("t1", 0, "p1", ["valid_syntax_in_toolcall"], 0.8, 0.9,
+                    [{"start_step": 0, "end_step": 1}])
+    s1 = FakeScored("t1", 1, "p1", ["valid_syntax_in_toolcall"], 0.7, 0.8,
+                    [{"start_step": 2, "end_step": 3}])
+    select_result = {"targeted": [s0],  # 只有 slice 0 进选集
+                     "manifest": {"targeted_count": 1, "general_count": 0, "general_ratio": 0.3}}
+    view = build_inspector_view(run_id="r1", spec=_spec(), scored=[s0, s1],
+                                select_result=select_result)
+    hits = {h["slice_index"]: h for h in
+            view["problems"][0]["capabilities"][0]["hit_trajectories"]}
+    assert hits[0]["selected"] is True
+    assert hits[1]["selected"] is False  # 同 traj 同 sub_problem，仅 slice 不同 → 不串
 
 
 def test_manifest_passthrough():
