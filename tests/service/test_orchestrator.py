@@ -44,6 +44,9 @@ class FakeScored:
     judge_confidence: float
     loss_mask_spans: list
     judge_match: bool = True
+    # empty defaults so real module3 dedup/select can read them (cosine + MinHash)
+    embedding: list = field(default_factory=list)
+    bm25_tokens: list = field(default_factory=list)
 
 
 class FakeCompiler:
@@ -137,3 +140,28 @@ async def test_blank_manifest_lines_skipped(tmp_path):
         emit=lambda ev: None,
     )
     assert len(view["problems"]) == 1  # 空行不编译
+
+
+def _deps_real_select():
+    from module3.pipeline import select_final_dataset
+    return PipelineDeps(
+        compiler=FakeCompiler(),
+        pipeline=FakePipeline(),
+        select_fn=select_final_dataset,   # 真实 module3
+        load_trajectories_fn=lambda p: [],
+    )
+
+
+async def test_run_pipeline_with_real_module3_select(tmp_path):
+    traj = tmp_path / "t.jsonl"
+    traj.write_text('{"id":"t1","messages":[]}\n')
+    view, _ = await run_pipeline(
+        manifest_lines=["代码总有语法错误"],
+        trajectory_path=traj,
+        deps=_deps_real_select(),
+        emit=lambda ev: None,
+    )
+    m = view["manifest"]
+    assert set(m) >= {"targeted_count", "general_count", "general_ratio"}
+    assert isinstance(m["targeted_count"], int) and m["targeted_count"] >= 0
+
