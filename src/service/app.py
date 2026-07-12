@@ -54,6 +54,11 @@ def create_app(
             store.append_event(run_id, {"stage": "done", "status": "error",
                                         "msg": str(exc)})
             store.mark_error(run_id)
+        finally:
+            # Clean up the uploaded jsonl temp file once the run has consumed it
+            # (success or failure). Only safe here — create_run must not delete it
+            # before the background task reads it.
+            traj_path.unlink(missing_ok=True)
 
     @app.post("/runs")
     async def create_run(manifest: UploadFile, trajectories: UploadFile):

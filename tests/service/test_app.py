@@ -23,6 +23,12 @@ async def _fake_run(*, manifest_lines, trajectory_path, deps, emit, run_id,
     return view, trajectories
 
 
+async def _failing_run(*, manifest_lines, trajectory_path, deps, emit, run_id,
+                       selection_config=None, general_config=None):
+    emit({"stage": "module0", "status": "running", "msg": "x"})
+    raise RuntimeError("boom")
+
+
 def _client():
     store = MemoryRunStore()
     app = create_app(store=store, run_fn=_fake_run, deps=object())
@@ -99,3 +105,76 @@ def test_trajectory_404_unknown():
             break
     r = client.get(f"/runs/{rid}/trajectory/missing")
     assert r.status_code == 404
+
+
+def test_events_stream_ends_with_done():
+    client, _ = _client()
+    rid = client.post("/runs", files={
+        "manifest": ("m.txt", "x", "text/plain"),
+        "trajectories": ("t.jsonl", '{"id":"t1","messages":[]}\n', "application/x-ndjson"),
+    }).json()["run_id"]
+    events = []
+    with client.stream("GET", f"/runs/{rid}/events") as resp:
+        assert resp.status_code == 200
+        assert resp.headers["content-type"].startswith("text/event-stream")
+        for line in resp.iter_lines():
+            if line.startswith("data:"):
+                import json as _json
+                events.append(_json.loads(line[len("data:"):].strip()))
+                if events[-1].get("stage") == "done":
+                    break
+    stages = [e["stage"] for e in events]
+    assert "module0" in stages
+    assert stages[-1] == "done"
+    assert events[-1]["status"] == "ok"
+
+
+def test_events_404_unknown_run():
+    client, _ = _client()
+    with client.stream("GET", "/runs/nope/events") as resp:
+        assert resp.status_code == 404
+
+
+def test_background_error_marks_run_error_and_view_409():
+    store = MemoryRunStore()
+    app = create_app(store=store, run_fn=_failing_run, deps=object())
+    client = TestClient(app)
+    rid = client.post("/runs", files={
+        "manifest": ("m.txt", "x", "text/plain"),
+        "trajectories": ("t.jsonl", '{"id":"t1","messages":[]}\n', "application/x-ndjson"),
+    }).json()["run_id"]
+    # Poll until the background task drives the run into a terminal state.
+    # Repeated client.get calls yield control so the background task runs.
+    for _ in range(50):
+        if store.status(rid) == "error":
+            break
+        client.get(f"/runs/{rid}/view")
+    assert store.status(rid) == "error"
+    r = client.get(f"/runs/{rid}/view")
+    assert r.status_code == 409  # error run has no view → 409
+
+
+def test_temp_jsonl_is_cleaned_up_after_run():
+    import pathlib
+
+    seen = {}
+
+    async def _capturing_run(*, manifest_lines, trajectory_path, deps, emit,
+                             run_id, selection_config=None, general_config=None):
+        seen["path"] = pathlib.Path(trajectory_path)
+        assert seen["path"].exists()  # temp file present while run consumes it
+        return {"run_id": run_id}, {}
+
+    store = MemoryRunStore()
+    app = create_app(store=store, run_fn=_capturing_run, deps=object())
+    client = TestClient(app)
+    rid = client.post("/runs", files={
+        "manifest": ("m.txt", "x", "text/plain"),
+        "trajectories": ("t.jsonl", '{"id":"t1","messages":[]}\n', "application/x-ndjson"),
+    }).json()["run_id"]
+    for _ in range(50):
+        if store.status(rid) == "done":
+            break
+        client.get(f"/runs/{rid}/view")
+    assert store.status(rid) == "done"
+    assert not seen["path"].exists()  # cleaned up in _background_run finally
