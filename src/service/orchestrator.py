@@ -75,14 +75,23 @@ async def run_pipeline(
     trajectory_path = pathlib.Path(trajectory_path)
 
     # ── Module 0: compile each manifest line ────────────────────────────
-    emit({"stage": "module0", "status": "running", "msg": "编译问题清单..."})
+    # `total` counts non-blank lines so the frontend can show real "i/N"
+    # determinate progress for the compile stage (index/total are additive,
+    # back-compatible SSE fields — older consumers just ignore them).
+    non_blank = [ln for ln in manifest_lines if ln.strip()]
+    total = len(non_blank)
+    emit({"stage": "module0", "status": "running", "msg": "编译问题清单...",
+          "index": 0, "total": total})
     specs: list[dict] = []
+    done_n = 0
     for i, line in enumerate(manifest_lines):
         line = line.strip()
         if not line:
             continue
+        done_n += 1
         emit({"stage": "module0", "status": "running",
-              "msg": f"编译第 {i + 1} 条: {line[:30]}"})
+              "msg": f"编译第 {done_n}/{total} 条: {line[:30]}",
+              "index": done_n, "total": total})
         spec_obj = await deps.compiler.compile(line)
         specs.append(_spec_to_dict(spec_obj, id_prefix=f"L{i + 1}."))
 
@@ -90,9 +99,19 @@ async def run_pipeline(
     all_sub_ids = [sp["id"] for sp in all_sub_problems]
 
     # ── Module 1+2: recall + judge + soft-score ─────────────────────────
-    emit({"stage": "module1", "status": "running", "msg": "切片+召回+精判..."})
+    # index/total start at 0 (indeterminate) until run_scored reports the first
+    # sub_problem; on_progress then drives a real "精判 i/N" determinate bar
+    # through the judge-heavy phase (the slowest, previously feedback-less step).
+    emit({"stage": "module1", "status": "running", "msg": "切片+召回+精判...",
+          "index": 0, "total": len(all_sub_problems)})
     scored = await deps.pipeline.run_scored(
-        trajectory_paths=[trajectory_path], problem_specs=specs
+        trajectory_paths=[trajectory_path],
+        problem_specs=specs,
+        on_progress=lambda done, total: emit({
+            "stage": "module1", "status": "running",
+            "msg": f"精判 {done}/{total} 个子问题",
+            "index": done, "total": total,
+        }),
     )
     emit({"stage": "module2", "status": "running",
           "msg": f"软加分完成: {len(scored)} 个候选"})
