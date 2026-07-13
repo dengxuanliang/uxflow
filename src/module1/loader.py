@@ -21,7 +21,13 @@ def load_trajectories(path: str | pathlib.Path) -> list[Trajectory]:
             line = line.strip()
             if not line:
                 continue
-            trajectories.append(parse_trajectory(json.loads(line)))
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # skip malformed JSON rather than abort the whole file
+            if not isinstance(data, dict):
+                continue  # valid JSON but not a trajectory object (null/42/[..]/"s")
+            trajectories.append(parse_trajectory(data))
     return trajectories
 
 

@@ -83,7 +83,13 @@ def create_app(
 
     @app.post("/runs")
     async def create_run(manifest: UploadFile, trajectories: UploadFile):
-        manifest_text = (await manifest.read()).decode("utf-8")
+        raw = await manifest.read()
+        try:
+            manifest_text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="用户清单必须是 UTF-8 编码的文本文件") from None
         traj_bytes = await trajectories.read()
         # persist uploaded jsonl to a temp file for the loader/pipeline
         tmp = tempfile.NamedTemporaryFile(

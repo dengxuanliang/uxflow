@@ -25,3 +25,17 @@ def test_empty_file(tmp_path):
     empty.write_text("")
     trajs = load_trajectories(empty)
     assert trajs == []
+
+
+def test_malformed_and_nondict_lines_skipped(tmp_path):
+    p = tmp_path / "mixed.jsonl"
+    # line1 valid, line2 malformed JSON, line3 valid-JSON-but-not-dict, line4 valid
+    p.write_text(
+        '{"id":"a","messages":[]}\n'
+        '}{ this is broken json\n'
+        '[1,2,3]\n'
+        '{"id":"b","messages":[]}\n'
+    )
+    trajs = load_trajectories(p)
+    ids = [t.id for t in trajs]
+    assert ids == ["a", "b"]   # both bad lines skipped, valid ones kept, no exception

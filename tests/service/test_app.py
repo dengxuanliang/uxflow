@@ -180,6 +180,15 @@ def test_temp_jsonl_is_cleaned_up_after_run():
     assert not seen["path"].exists()  # cleaned up in _background_run finally
 
 
+def test_non_utf8_manifest_returns_400():
+    client, _ = _client()
+    resp = client.post("/runs", files={
+        "manifest": ("m.txt", b"\xff\xfe\x00bad", "text/plain"),
+        "trajectories": ("t.jsonl", '{"id":"t1","messages":[]}\n', "application/x-ndjson"),
+    })
+    assert resp.status_code == 400
+
+
 def test_cancel_unknown_run_404():
     client, _ = _client()
     r = client.post("/runs/nope/cancel")
