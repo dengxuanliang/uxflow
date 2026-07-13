@@ -66,9 +66,12 @@ class FakeCompiler:
 
 
 class FakePipeline:
-    async def run_scored(self, *, trajectory_paths, problem_specs):
-        # one hit per sub_problem
+    async def run_scored(self, *, trajectory_paths, problem_specs, on_progress=None):
+        # one hit per sub_problem; mirror real run_scored's per-sub_problem
+        # on_progress callback so the orchestrator's progress wiring is exercised
         out = []
+        total = sum(len(s["sub_problems"]) for s in problem_specs)
+        done = 0
         for spec in problem_specs:
             for sp in spec["sub_problems"]:
                 out.append(FakeScored(
@@ -76,6 +79,9 @@ class FakePipeline:
                     ["valid_syntax_in_toolcall"], 0.8, 0.9,
                     [{"start_step": 0, "end_step": 1}],
                 ))
+                done += 1
+                if on_progress is not None:
+                    on_progress(done, total)
         return out
 
 
@@ -142,6 +148,26 @@ async def test_blank_manifest_lines_skipped(tmp_path):
     assert len(view["problems"]) == 1  # 空行不编译
 
 
+async def test_module1_emits_per_subproblem_judge_progress(tmp_path):
+    # Two complaints → 2 sub_problems (FakeCompiler yields one each). The judge
+    # phase must emit determinate "精判 i/N" events with index/total so the
+    # frontend progress bar advances instead of freezing.
+    traj = tmp_path / "t.jsonl"
+    traj.write_text('{"id":"t1","messages":[]}\n')
+    events = []
+    await run_pipeline(
+        manifest_lines=["抱怨A", "抱怨B"],
+        trajectory_path=traj,
+        deps=_deps(),
+        emit=lambda ev: events.append(ev),
+    )
+    progress = [e for e in events
+                if e["stage"] == "module1" and e.get("index", 0) >= 1]
+    assert len(progress) == 2  # one per sub_problem
+    assert progress[-1]["index"] == 2 and progress[-1]["total"] == 2
+    assert "精判 2/2" in progress[-1]["msg"]
+
+
 def _deps_real_select():
     from module3.pipeline import select_final_dataset
     return PipelineDeps(
@@ -164,4 +190,16 @@ async def test_run_pipeline_with_real_module3_select(tmp_path):
     m = view["manifest"]
     assert set(m) >= {"targeted_count", "general_count", "general_ratio"}
     assert isinstance(m["targeted_count"], int) and m["targeted_count"] >= 0
+
+
+async def test_orchestrator_survives_when_emit_would_be_called(tmp_path):
+    # sanity: on_progress path executes without aborting the run (issue 6 guard
+    # lives in real pipeline.run_scored; here we ensure the wiring is exercised)
+    traj = tmp_path / "t.jsonl"
+    traj.write_text('{"id":"t1","messages":[]}\n')
+    events = []
+    view, _ = await run_pipeline(
+        manifest_lines=["a", "b"], trajectory_path=traj,
+        deps=_deps(), emit=lambda ev: events.append(ev))
+    assert view is not None
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pathlib
 from dataclasses import dataclass
+from typing import Callable
 
 from module1.models import SFTCandidate
 from module1.loader import load_trajectories
@@ -108,12 +109,17 @@ class TrajectoryPipeline:
         *,
         trajectory_paths: list[str | pathlib.Path],
         problem_specs: list[dict],
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> list[ScoredCandidate]:
         """Module 1→2 entry: recall, judge, and soft-score slice candidates.
 
         Unlike run(), this keeps judge misses as decayed ScoredCandidates so
         Module 2 ranking can preserve recall evidence before Module 3 selects
         the final trainable dataset.
+
+        on_progress, if given, is called ``(done, total)`` after each sub_problem
+        is scored — lets a caller surface per-sub_problem progress during the
+        judge-heavy phase. Default None keeps behavior unchanged.
         """
         self._store = MemoryIndex()
         self._traj_paths.clear()
@@ -122,9 +128,17 @@ class TrajectoryPipeline:
             return []
 
         all_scored: list[ScoredCandidate] = []
+        total = sum(len(spec.get("sub_problems", [])) for spec in problem_specs)
+        done = 0
         for spec in problem_specs:
             for sp in spec.get("sub_problems", []):
                 all_scored.extend(await self._score_sub_problem(sp))
+                done += 1
+                if on_progress is not None:
+                    try:
+                        on_progress(done, total)
+                    except Exception:  # noqa: BLE001 — progress reporting must never abort scoring
+                        pass
 
         all_scored.sort(key=lambda c: c.relevance_score, reverse=True)
         return all_scored

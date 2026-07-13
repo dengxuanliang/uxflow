@@ -48,37 +48,64 @@ def build_inspector_view(
 
     problems = []
     for sp in spec.get("sub_problems", []):
-        sp_id = sp["id"]
+        sp_id = sp.get("id")
+        if sp_id is None:
+            continue  # defensive: skip malformed sub_problem lacking an id (issue 11)
         target_caps = sp.get("target_capability", [])
         cands = by_problem.get(sp_id, [])
 
-        capabilities = []
-        for label in target_caps:
-            hits = []
-            for c in cands:
-                if label not in (c.capability or []):
-                    continue
-                hits.append({
+        # Deduplicate hits per (trajectory_id, slice_index) for this sub_problem,
+        # keeping only genuine judge matches with a non-empty span set. The judge
+        # verdict is per-slice-per-sub_problem (not per individual capability), so
+        # every capability of this sub_problem shares the SAME hit set — we build
+        # it once (issue 5) instead of once-per-label, and drop misses (issue 7).
+        seen: dict[tuple, dict] = {}
+        for c in cands:
+            if not getattr(c, "judge_match", False):
+                continue
+            spans = list(c.loss_mask_spans or [])
+            if not spans:
+                continue
+            key = (c.trajectory_id, c.slice_index)
+            if key not in seen:
+                seen[key] = {
                     "trajectory_id": c.trajectory_id,
                     "slice_index": c.slice_index,
                     "relevance_score": c.relevance_score,
                     "judge_confidence": c.judge_confidence,
                     "selected": (c.trajectory_id, c.slice_index, sp_id) in selected_keys,
-                    "loss_mask_spans": list(c.loss_mask_spans or []),
-                })
-            capabilities.append({
+                    "loss_mask_spans": spans,
+                }
+        sub_hits = list(seen.values())
+
+        capabilities = [
+            {
                 "label": label,
                 "parent": None,  # taxonomy parent enrichment reserved (spec §10)
                 "color": colors.get(label, "#888888"),
-                "hit_count": len(hits),
-                "hit_trajectories": hits,
-            })
+                "hit_count": len(sub_hits),
+                "hit_trajectories": sub_hits,
+            }
+            for label in target_caps
+        ]
 
         problems.append({
             "id": sp_id,
             "failure_summary": sp.get("failure_summary", ""),
             "confidence": sp.get("confidence", 0.0),
             "capabilities": capabilities,
+            # Full module0 compilation output, surfaced for the "编译详情" modal.
+            # All fields already ride along in the serialized spec (orchestrator
+            # _spec_to_dict) — we just expose them instead of dropping them.
+            "compile": {
+                "raw_text": sp.get("raw_text", ""),
+                "origin": sp.get("origin", ""),
+                "target_capability": target_caps,
+                "trajectory_signal": sp.get("trajectory_signal", ""),
+                "keywords": sp.get("keywords", []),
+                "hyde_positive": sp.get("hyde_positive", []),
+                "structured_filters": sp.get("structured_filters", {}),
+            },
         })
 
     return {

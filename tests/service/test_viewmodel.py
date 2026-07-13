@@ -65,8 +65,10 @@ def test_view_maps_problems_and_capabilities():
     assert hit["relevance_score"] == 0.8
     assert hit["judge_confidence"] == 0.9
     assert hit["loss_mask_spans"] == [{"start_step": 1, "end_step": 2}]
-    # self_verification 无命中
-    assert caps["self_verification"]["hit_count"] == 0
+    # judge 判定是按 (轨迹, slice, sub_problem) 定级的，不是按单个能力；
+    # 同一 sub_problem 下所有 target_capability 共享同一份命中集合（issue 5）
+    assert caps["self_verification"]["hit_count"] == 1
+    assert caps["self_verification"]["hit_trajectories"] == vs["hit_trajectories"]
 
 
 def test_selected_flag_reflects_module3_targeted():
@@ -117,17 +119,20 @@ def test_manifest_passthrough():
     assert view["manifest"]["general_ratio"] == 0.25
 
 
-def test_candidate_capability_not_in_subproblem_is_ignored():
-    # candidate 报了一个不在该 sub_problem target_capability 里的 label → 不挂
-    scored = [FakeScored("t1", 0, "p1", ["some_other_label"], 0.8, 0.9,
-                         [{"start_step": 0, "end_step": 1}])]
+def test_candidate_for_other_subproblem_is_ignored():
+    # judge 按 (轨迹, slice, sub_problem) 定级，candidate.capability 总是整份
+    # target_capability 列表（module2 rerank 的产物），因此 issue 5 修复后不再
+    # 按单个 label 过滤；仍然存在的边界是 sub_problem_id —— 属于别的
+    # sub_problem 的 candidate 不应挂到本 sub_problem 下。
+    scored = [FakeScored("t1", 0, "other_problem", ["valid_syntax_in_toolcall"],
+                         0.8, 0.9, [{"start_step": 0, "end_step": 1}])]
     select_result = {"targeted": [], "manifest": {
         "targeted_count": 0, "general_count": 0, "general_ratio": 0.3}}
     view = build_inspector_view(
         run_id="r1", spec=_spec(), scored=scored, select_result=select_result
     )
     total_hits = sum(c["hit_count"] for c in view["problems"][0]["capabilities"])
-    assert total_hits == 0  # 无匹配能力，忽略该命中
+    assert total_hits == 0  # 不同 sub_problem 的候选不挂到这里
 
 
 def test_build_trajectory_index():
@@ -153,3 +158,91 @@ def test_build_trajectory_index():
     assert idx["t1"]["trajectory_id"] == "t1"
     assert idx["t1"]["steps"][0]["role"] == "user"
     assert idx["t1"]["steps"][0]["content"] == "hi"
+
+
+def test_problem_exposes_full_module0_compile_output():
+    spec = {
+        "raw_input": "x", "domain": "agentic_swe",
+        "sub_problems": [{
+            "id": "p1", "failure_summary": "s", "confidence": 0.9,
+            "origin": "original", "route": "pass", "raw_text": "原始抱怨片段",
+            "target_capability": ["valid_syntax_in_toolcall"],
+            "trajectory_signal": "grep SyntaxError in tool output",
+            "keywords": ["SyntaxError", "colon"],
+            "hyde_positive": ["段一：正确做法……", "段二：验证……"],
+            "structured_filters": {"languages": ["python"], "tools_used": ["Edit"],
+                                   "has_verification_step": True},
+        }],
+    }
+    view = build_inspector_view(
+        run_id="r1", spec=spec, scored=[],
+        select_result={"targeted": [], "manifest": {}},
+    )
+    c = view["problems"][0]["compile"]
+    assert c["raw_text"] == "原始抱怨片段"
+    assert c["origin"] == "original"
+    assert "route" not in c
+    assert c["trajectory_signal"].startswith("grep")
+    assert c["keywords"] == ["SyntaxError", "colon"]
+    assert len(c["hyde_positive"]) == 2
+    assert c["structured_filters"]["languages"] == ["python"]
+    assert c["structured_filters"]["has_verification_step"] is True
+    assert c["target_capability"] == ["valid_syntax_in_toolcall"]
+
+
+def test_hit_count_excludes_judge_miss():
+    # a judge miss (judge_match=False) must NOT appear as a hit
+    miss = FakeScored("t1", 0, "p1", ["valid_syntax_in_toolcall"], 0.3, 0.2,
+                      [{"start_step": 0, "end_step": 1}])
+    miss.judge_match = False
+    view = build_inspector_view(
+        run_id="r", spec=_spec(), scored=[miss],
+        select_result={"targeted": [], "manifest": {}})
+    caps = view["problems"][0]["capabilities"]
+    assert all(c["hit_count"] == 0 for c in caps)
+
+
+def test_empty_spans_excluded():
+    # judge_match True but empty spans → not a real demonstration, exclude
+    nospan = FakeScored("t1", 0, "p1", ["valid_syntax_in_toolcall"], 0.8, 0.9, [])
+    nospan.judge_match = True
+    view = build_inspector_view(
+        run_id="r", spec=_spec(), scored=[nospan],
+        select_result={"targeted": [], "manifest": {}})
+    caps = view["problems"][0]["capabilities"]
+    assert all(c["hit_count"] == 0 for c in caps)
+
+
+def test_multi_capability_no_double_count():
+    # one sub_problem with 2 target capabilities, one matched slice carrying both
+    # → both capabilities report the SAME single hit (not double-counted)
+    c = FakeScored("t1", 0, "p1",
+                   ["valid_syntax_in_toolcall", "self_verification"], 0.8, 0.9,
+                   [{"start_step": 1, "end_step": 2}])
+    c.judge_match = True
+    view = build_inspector_view(
+        run_id="r", spec=_spec(), scored=[c],
+        select_result={"targeted": [], "manifest": {}})
+    caps = view["problems"][0]["capabilities"]
+    assert len(caps) == 2
+    assert all(cap["hit_count"] == 1 for cap in caps)
+    # both capabilities point at the same single (traj, slice) hit
+    ids = {(h["trajectory_id"], h["slice_index"])
+           for cap in caps for h in cap["hit_trajectories"]}
+    assert ids == {("t1", 0)}
+
+
+def test_subproblem_without_id_skipped():
+    spec = {"raw_input": "x", "domain": "agentic_swe", "sub_problems": [
+        {"failure_summary": "no id", "target_capability": ["x"], "confidence": 0.9},
+        {"id": "p1", "failure_summary": "ok", "target_capability": [], "confidence": 0.9},
+    ]}
+    view = build_inspector_view(run_id="r", spec=spec, scored=[],
+                                select_result={"targeted": [], "manifest": {}})
+    assert [p["id"] for p in view["problems"]] == ["p1"]  # id-less one skipped
+
+
+def test_compile_has_no_route_field():
+    view = build_inspector_view(run_id="r", spec=_spec(), scored=[],
+                                select_result={"targeted": [], "manifest": {}})
+    assert "route" not in view["problems"][0]["compile"]
