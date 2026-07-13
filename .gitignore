@@ -13,6 +13,7 @@ venv/
 .mypy_cache/
 .DS_Store
 .claude/
+.superpowers/
 docs/superpowers/reports/
 SWE轨迹优选器设计.md
 

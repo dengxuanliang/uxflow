@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>uxflow · SWE 轨迹优选器</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-title">uxflow</span>
+      <span class="brand-sep">·</span>
+      <span class="brand-subtitle">SWE 轨迹优选器</span>
+    </div>
+    <div class="uploads">
+      <label class="file-slot" id="slot-manifest">
+        <span class="slot-tag">用户清单 <em>.txt</em></span>
+        <span class="slot-name" id="name-manifest">点击选择文件…</span>
+        <input type="file" id="manifest" accept=".txt">
+      </label>
+      <label class="file-slot" id="slot-trajectories">
+        <span class="slot-tag">候选回流 <em>.jsonl</em></span>
+        <span class="slot-name" id="name-trajectories">点击选择文件…</span>
+        <input type="file" id="trajectories" accept=".jsonl">
+      </label>
+      <button id="run">▶ 运行</button>
+    </div>
+    <div id="manifest-summary" class="manifest"></div>
+  </header>
+
+  <div id="progress" class="progress hidden">
+    <div class="stepper" id="stepper">
+      <div class="step-node" data-stage="module0"><i></i><span>编译</span></div>
+      <div class="step-sep"></div>
+      <div class="step-node" data-stage="module1"><i></i><span>召回·精判</span></div>
+      <div class="step-sep"></div>
+      <div class="step-node" data-stage="module2"><i></i><span>软加分</span></div>
+      <div class="step-sep"></div>
+      <div class="step-node" data-stage="module3"><i></i><span>优选</span></div>
+      <div class="step-sep"></div>
+      <div class="step-node" data-stage="done"><i></i><span>完成</span></div>
+    </div>
+    <div class="prog-bar" id="prog-bar"><div class="prog-fill" id="prog-fill"></div></div>
+    <div class="prog-line">
+      <span class="prog-msg" id="progress-msg">先上传两个文件，点运行…</span>
+      <span class="prog-meta">
+        <span id="prog-count" class="prog-count"></span>
+        <span id="prog-eta" class="prog-eta"></span>
+        <span id="prog-elapsed" class="prog-elapsed">⏱ 0:00</span>
+        <button id="stop" class="btn-stop" style="display:none">■ 停止</button>
+      </span>
+    </div>
+  </div>
+
+  <main id="workspace" class="split3 hidden">
+    <section id="col-problems" class="col">
+      <div class="label">问题 <span class="arrow">→</span> 能力</div>
+      <div id="problems"></div>
+    </section>
+    <section id="col-hits" class="col">
+      <div class="label">命中轨迹</div>
+      <div id="hits"></div>
+    </section>
+    <section id="col-detail" class="col">
+      <div class="label">轨迹详情</div>
+      <div id="detail"></div>
+    </section>
+  </main>
+
+  <div id="compile-modal" class="modal-overlay hidden">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <span id="modal-title">module0 编译详情</span>
+        <button id="modal-close" class="modal-close" aria-label="关闭">✕</button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
+
