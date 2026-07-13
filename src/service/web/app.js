@@ -143,9 +143,11 @@ function fmtDur(sec) {
 
 function subscribeEvents(runId) {
   if (state.es) { state.es.close(); state.es = null; }   // never leak a prior stream
+  const myGen = state.runGen;   // this run's generation; a newer run bumps it (I5)
   const es = new EventSource(`/runs/${runId}/events`);
   state.es = es;
   es.onmessage = async (e) => {
+    if (myGen !== state.runGen) { es.close(); return; }   // superseded by a newer run — stop
     const ev = JSON.parse(e.data);
     handleEvent(ev);
     if (ev.stage === "done") {
@@ -157,7 +159,7 @@ function subscribeEvents(runId) {
         setMsg((ev.status === "cancelled" ? "已停止" : "运行出错: ") + (ev.msg || ""));
         return;
       }
-      await loadView(runId);
+      await loadView(runId, myGen);
     }
   };
   es.onerror = () => {
@@ -222,10 +224,11 @@ function handleEvent(ev) {
   }
 }
 
-async function loadView(runId) {
+async function loadView(runId, myGen) {
   setStage("done");
   setBarFraction(1);
   const resp = await fetch(`/runs/${runId}/view`);
+  if (myGen !== state.runGen) return;   // a newer run started during the fetch — drop stale view (I5)
   state.view = await resp.json();
   $("progress").classList.add("hidden");
   $("workspace").classList.remove("hidden");
