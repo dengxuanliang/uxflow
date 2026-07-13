@@ -15,8 +15,10 @@ let state = {
   startedAt: null,
   timer: null,
   compileFirstDoneAt: null,  // wall time when first complaint finished compiling
+  compileFirstDoneN: null,   // `done` count observed when the anchor was set
   compileTotal: 0,
   stopping: false,
+  runGen: 0,                 // per-run generation token; isolates stop/rerun races
 };
 
 $("run").addEventListener("click", startRun);
@@ -45,6 +47,7 @@ async function startRun() {
 
   state.stopping = false;
   state.runId = null;
+  const myGen = ++state.runGen;   // this run's token; a later startRun/stopRun bumps runGen and invalidates us
   $("run").disabled = true;
   $("progress").classList.remove("hidden");
   $("workspace").classList.add("hidden");
@@ -68,9 +71,8 @@ async function startRun() {
     return;
   }
 
-  // User may have clicked 停止 during the upload window (before runId existed).
-  if (state.stopping) {
-    // best-effort cancel the run we just created, then bail out of the UI flow
+  // 若在上传窗口内用户点了停止、或又发起了新的运行，本次 startRun 作废
+  if (myGen !== state.runGen || state.stopping) {
     try { await fetch(`/runs/${run_id}/cancel`, { method: "POST" }); } catch (_) {}
     return;
   }
@@ -89,6 +91,7 @@ function resetRunState() {
 
 function resetProgress() {
   state.compileFirstDoneAt = null;
+  state.compileFirstDoneN = null;
   state.compileTotal = 0;
   $("prog-count").textContent = "";
   $("prog-eta").textContent = "";
@@ -157,12 +160,17 @@ function subscribeEvents(runId) {
       await loadView(runId);
     }
   };
-  es.onerror = () => { es.close(); stopTimer(); $("run").disabled = false; };
+  es.onerror = () => {
+    es.close(); state.es = null; stopTimer();
+    $("run").disabled = false; $("stop").style.display = "none";
+    setMsg("连接中断");
+  };
 }
 
 // Stop the current run: tell the backend to cancel, close the stream locally.
 async function stopRun() {
   state.stopping = true;
+  state.runGen++;   // invalidate any startRun still in flight (upload window of an older/newer run)
   setMsg("正在停止…");
   if (state.es) { state.es.close(); state.es = null; }
   stopTimer();
@@ -192,8 +200,9 @@ function handleEvent(ev) {
     // compile is the only stage with a defensible per-item cost estimate).
     if (done >= 1 && state.compileFirstDoneAt === null) {
       state.compileFirstDoneAt = Date.now();   // mark first completion; no ETA yet
-    } else if (done >= 2 && state.compileFirstDoneAt !== null && done < total) {
-      const perItem = (Date.now() - state.compileFirstDoneAt) / (done - 1) / 1000;
+      state.compileFirstDoneN = done;          // anchor the count too (may skip past done=1)
+    } else if (state.compileFirstDoneAt !== null && done > state.compileFirstDoneN && done < total) {
+      const perItem = (Date.now() - state.compileFirstDoneAt) / (done - state.compileFirstDoneN) / 1000;
       const remain = perItem * (total - done);
       $("prog-eta").textContent = `编译约剩 ~${fmtDur(remain)}`;
     }
