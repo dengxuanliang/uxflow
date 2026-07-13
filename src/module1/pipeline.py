@@ -8,6 +8,7 @@ for each ProblemSpec sub_problem: recall → judge → collect SFTCandidates.
 
 from __future__ import annotations
 
+import asyncio
 import pathlib
 from dataclasses import dataclass
 from typing import Callable
@@ -123,7 +124,12 @@ class TrajectoryPipeline:
         """
         self._store = MemoryIndex()
         self._traj_paths.clear()
-        self._build_index(trajectory_paths)
+        # Offload the synchronous, CPU-bound index build (slicing + embedding)
+        # to a thread so it doesn't block the event loop — keeps SSE progress
+        # flushing and makes cancellation responsive at the thread boundary (C2).
+        # Thread-safety rests on C1's Semaphore: only one run touches this
+        # instance's _store/_traj_paths at a time.
+        await asyncio.to_thread(self._build_index, trajectory_paths)
         if self._store.size == 0:
             return []
 

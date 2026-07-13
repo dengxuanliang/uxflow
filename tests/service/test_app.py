@@ -254,3 +254,43 @@ def test_cancel_finalizes_and_cleans_up_via_done_callback():
     assert store.status(rid) == "error"
     # temp file cleaned by _background_run finally and/or _finalize (idempotent)
     assert not seen["path"].exists()
+
+
+def test_concurrent_runs_are_serialized():
+    import asyncio as _aio
+    log = []
+
+    async def _recording_run(*, manifest_lines, trajectory_path, deps, emit,
+                             run_id, selection_config=None, general_config=None):
+        log.append(("enter", run_id))
+        await _aio.sleep(0.05)   # hold long enough to detect overlap
+        log.append(("exit", run_id))
+        return {"run_id": run_id, "problems": [], "manifest": {}}, {}
+
+    store = MemoryRunStore()
+    app = create_app(store=store, run_fn=_recording_run, deps=object())
+    files = {
+        "manifest": ("m.txt", "x", "text/plain"),
+        "trajectories": ("t.jsonl", '{"id":"t1","messages":[]}\n', "application/x-ndjson"),
+    }
+    # NOTE: must use `with TestClient(app)` here — a bare TestClient(app) tears
+    # down its anyio portal/event loop after every single request, which
+    # cancels the still-sleeping background task between polls and makes this
+    # test pass trivially (both runs end up "error", never "done"). The `with`
+    # form keeps one event loop alive across requests so the two background
+    # tasks genuinely race for the semaphore, which is what this test needs
+    # to actually distinguish serialized from interleaved execution.
+    with TestClient(app) as client:
+        r1 = client.post("/runs", files=files).json()["run_id"]
+        r2 = client.post("/runs", files=files).json()["run_id"]
+        # drive the event loop until both runs reach terminal status
+        for _ in range(300):
+            if store.status(r1) == "done" and store.status(r2) == "done":
+                break
+            client.get(f"/runs/{r1}/view")
+            client.get(f"/runs/{r2}/view")
+        assert store.status(r1) == "done" and store.status(r2) == "done"
+    # serialization invariant: no enter happens between another run's enter and exit
+    # i.e. the sequence must be enter,exit,enter,exit — never enter,enter
+    kinds = [k for (k, _rid) in log]
+    assert kinds == ["enter", "exit", "enter", "exit"], f"runs overlapped: {log}"

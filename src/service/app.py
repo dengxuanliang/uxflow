@@ -37,22 +37,32 @@ def create_app(
 
     # Track in-flight background tasks so a run can be cancelled (see /cancel).
     _tasks: dict[str, asyncio.Task] = {}
+    # Serialize actual pipeline execution: the injected compiler/pipeline hold
+    # per-run mutable state (self._store is reset each run_scored), so concurrent
+    # runs would corrupt each other. A run waits its turn rather than interleave.
+    _run_lock = asyncio.Semaphore(1)
 
     async def _background_run(run_id: str, manifest_text: str, traj_path: pathlib.Path):
         def emit(ev: dict) -> None:
             store.append_event(run_id, ev)
         try:
-            lines = manifest_text.splitlines()
-            view, trajectories = await run_fn(
-                manifest_lines=lines,
-                trajectory_path=traj_path,
-                deps=deps,
-                emit=emit,
-                run_id=run_id,
-            )
-            store.set_view(run_id, view, trajectories)
-            store.append_event(run_id, {"stage": "done", "status": "ok"})
-            store.mark_done(run_id)
+            # If a prior run holds the lock, tell the user we're queued rather
+            # than leaving the UI frozen at "上传中".
+            if _run_lock.locked():
+                emit({"stage": "module0", "status": "running",
+                      "msg": "前一个任务运行中，排队等待…"})
+            async with _run_lock:      # serialize pipeline execution (C1)
+                lines = manifest_text.splitlines()
+                view, trajectories = await run_fn(
+                    manifest_lines=lines,
+                    trajectory_path=traj_path,
+                    deps=deps,
+                    emit=emit,
+                    run_id=run_id,
+                )
+                store.set_view(run_id, view, trajectories)
+                store.append_event(run_id, {"stage": "done", "status": "ok"})
+                store.mark_done(run_id)
         except asyncio.CancelledError:
             # User stopped the run: emit a terminal event so the SSE stream
             # unblocks, mark the run so /view returns 409. Do not re-raise —
