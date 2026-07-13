@@ -40,13 +40,27 @@ class _Run:
 class MemoryRunStore:
     """In-memory RunStore. Not persistent; lost on restart (spec §10)."""
 
-    def __init__(self) -> None:
+    def __init__(self, max_runs: int = 50) -> None:
         self._runs: dict[str, _Run] = {}
+        self._max_runs = max_runs
+        self._notify_tasks: set = set()
 
     def create(self) -> str:
+        self._evict_if_needed()
         run_id = uuid.uuid4().hex[:16]
         self._runs[run_id] = _Run()
         return run_id
+
+    def _evict_if_needed(self) -> None:
+        # Bound memory: when at capacity, drop the oldest TERMINAL runs (dict is
+        # insertion-ordered). Never evict a still-running run.
+        if len(self._runs) < self._max_runs:
+            return
+        for rid, run in list(self._runs.items()):
+            if run.status in ("done", "error"):
+                del self._runs[rid]
+                if len(self._runs) < self._max_runs:
+                    return
 
     def _get(self, run_id: str) -> _Run | None:
         return self._runs.get(run_id)
@@ -62,7 +76,9 @@ class MemoryRunStore:
                 run.condition.notify_all()
         try:
             loop = asyncio.get_running_loop()
-            loop.create_task(_notify())
+            t = loop.create_task(_notify())
+            self._notify_tasks.add(t)
+            t.add_done_callback(self._notify_tasks.discard)
         except RuntimeError:
             # No running loop (sync context): subscribers, if any, still see the
             # event within the subscribe() 0.5s poll. NOTE: a call from a worker
@@ -124,7 +140,9 @@ class MemoryRunStore:
             async with run.condition:
                 run.condition.notify_all()
         try:
-            asyncio.get_running_loop().create_task(_notify())
+            t = asyncio.get_running_loop().create_task(_notify())
+            self._notify_tasks.add(t)
+            t.add_done_callback(self._notify_tasks.discard)
         except RuntimeError:
             # See append_event: same off-loop / worker-thread caveat applies.
             pass

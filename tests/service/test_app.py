@@ -178,3 +178,79 @@ def test_temp_jsonl_is_cleaned_up_after_run():
         client.get(f"/runs/{rid}/view")
     assert store.status(rid) == "done"
     assert not seen["path"].exists()  # cleaned up in _background_run finally
+
+
+def test_cancel_unknown_run_404():
+    client, _ = _client()
+    r = client.post("/runs/nope/cancel")
+    assert r.status_code == 404
+
+
+def test_cancel_stops_run_and_marks_error():
+    # A run_fn that blocks lets us cancel mid-flight; the CancelledError branch
+    # emits a terminal "cancelled" event and marks the run so /view returns 409.
+    async def _blocking_run(*, manifest_lines, trajectory_path, deps, emit,
+                            run_id, selection_config=None, general_config=None):
+        emit({"stage": "module1", "status": "running", "msg": "召回中..."})
+        await asyncio.sleep(10)  # long; cancelled before it finishes
+        return {"run_id": run_id}, {}
+
+    store = MemoryRunStore()
+    app = create_app(store=store, run_fn=_blocking_run, deps=object())
+    client = TestClient(app)
+    rid = client.post("/runs", files={
+        "manifest": ("m.txt", "x", "text/plain"),
+        "trajectories": ("t.jsonl", '{"id":"t1","messages":[]}\n', "application/x-ndjson"),
+    }).json()["run_id"]
+
+    # let the background task start and reach the blocking await
+    for _ in range(20):
+        if store.events_snapshot(rid):
+            break
+        client.get(f"/runs/{rid}/view")
+
+    r = client.post(f"/runs/{rid}/cancel")
+    assert r.status_code == 200
+    assert r.json()["cancelled"] is True
+
+    # background task's CancelledError handler runs on the loop; poll for terminal
+    for _ in range(50):
+        if store.status(rid) == "error":
+            break
+        client.get(f"/runs/{rid}/view")
+    assert store.status(rid) == "error"
+    events = store.events_snapshot(rid)
+    assert events[-1]["status"] == "cancelled"
+    assert client.get(f"/runs/{rid}/view").status_code == 409
+
+
+def test_cancel_finalizes_and_cleans_up_via_done_callback():
+    import pathlib as _pl
+    seen = {}
+
+    async def _blocking_run(*, manifest_lines, trajectory_path, deps, emit,
+                            run_id, selection_config=None, general_config=None):
+        seen["path"] = _pl.Path(trajectory_path)
+        emit({"stage": "module1", "status": "running", "msg": "..."})
+        await asyncio.sleep(10)
+        return {"run_id": run_id}, {}
+
+    store = MemoryRunStore()
+    app = create_app(store=store, run_fn=_blocking_run, deps=object())
+    client = TestClient(app)
+    rid = client.post("/runs", files={
+        "manifest": ("m.txt", "x", "text/plain"),
+        "trajectories": ("t.jsonl", '{"id":"t1","messages":[]}\n', "application/x-ndjson"),
+    }).json()["run_id"]
+    for _ in range(50):
+        if store.events_snapshot(rid):
+            break
+        client.get(f"/runs/{rid}/view")
+    client.post(f"/runs/{rid}/cancel")
+    for _ in range(50):
+        if store.status(rid) == "error":
+            break
+        client.get(f"/runs/{rid}/view")
+    assert store.status(rid) == "error"
+    # temp file cleaned by _background_run finally and/or _finalize (idempotent)
+    assert not seen["path"].exists()

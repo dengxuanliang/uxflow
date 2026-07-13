@@ -35,6 +35,9 @@ def create_app(
 
     app = FastAPI(title="Trajectory Inspector")
 
+    # Track in-flight background tasks so a run can be cancelled (see /cancel).
+    _tasks: dict[str, asyncio.Task] = {}
+
     async def _background_run(run_id: str, manifest_text: str, traj_path: pathlib.Path):
         def emit(ev: dict) -> None:
             store.append_event(run_id, ev)
@@ -50,6 +53,13 @@ def create_app(
             store.set_view(run_id, view, trajectories)
             store.append_event(run_id, {"stage": "done", "status": "ok"})
             store.mark_done(run_id)
+        except asyncio.CancelledError:
+            # User stopped the run: emit a terminal event so the SSE stream
+            # unblocks, mark the run so /view returns 409. Do not re-raise —
+            # the task ends cleanly after finally cleanup.
+            store.append_event(run_id, {"stage": "done", "status": "cancelled",
+                                        "msg": "已停止"})
+            store.mark_error(run_id)
         except Exception as exc:  # noqa: BLE001 — surface as error event, don't crash server
             store.append_event(run_id, {"stage": "done", "status": "error",
                                         "msg": str(exc)})
@@ -59,6 +69,7 @@ def create_app(
             # (success or failure). Only safe here — create_run must not delete it
             # before the background task reads it.
             traj_path.unlink(missing_ok=True)
+            _tasks.pop(run_id, None)
 
     @app.post("/runs")
     async def create_run(manifest: UploadFile, trajectories: UploadFile):
@@ -70,10 +81,35 @@ def create_app(
         tmp.write(traj_bytes)
         tmp.close()
         run_id = store.create()
-        asyncio.create_task(
-            _background_run(run_id, manifest_text, pathlib.Path(tmp.name))
+        traj_path = pathlib.Path(tmp.name)
+        task = asyncio.create_task(
+            _background_run(run_id, manifest_text, traj_path)
         )
+        _tasks[run_id] = task
+
+        def _finalize(_t: asyncio.Task, rid: str = run_id, path: pathlib.Path = traj_path) -> None:
+            # Safety net that runs no matter how the task ended — including the
+            # narrow window where cancel() is delivered before the coroutine body
+            # ever executed (so _background_run's try/finally never ran). All
+            # actions here are idempotent, so they compose safely with that finally.
+            path.unlink(missing_ok=True)          # idempotent (missing_ok)
+            _tasks.pop(rid, None)                  # idempotent
+            if store.status(rid) == "running":     # body never finalized → force terminal
+                store.append_event(rid, {"stage": "done", "status": "cancelled",
+                                         "msg": "已停止"})
+                store.mark_error(rid)
+
+        task.add_done_callback(_finalize)
         return {"run_id": run_id}
+
+    @app.post("/runs/{run_id}/cancel")
+    async def cancel_run(run_id: str):
+        if store.status(run_id) is None:
+            raise HTTPException(status_code=404, detail="unknown run")
+        task = _tasks.get(run_id)
+        if task is not None and not task.done():
+            task.cancel()  # _background_run's CancelledError handler finalizes
+        return {"run_id": run_id, "cancelled": True}
 
     @app.get("/runs/{run_id}/events")
     async def stream_events(run_id: str):

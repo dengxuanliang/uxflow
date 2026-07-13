@@ -84,3 +84,29 @@ async def test_subscribe_replays_existing_events():
         if ev.get("stage") == "done":
             break
     assert len(received) == 2  # 订阅前已有的事件也要重放
+
+
+def test_evicts_oldest_terminal_run_at_capacity():
+    store = MemoryRunStore(max_runs=3)
+    a = store.create()
+    store.mark_done(a)
+    b = store.create()
+    store.mark_done(b)
+    c = store.create()  # still running
+    # at capacity (3); creating a 4th must evict the oldest TERMINAL run (a)
+    d = store.create()
+    assert store.status(a) is None        # evicted
+    assert store.status(b) == "done"      # kept
+    assert store.status(c) == "running"   # running never evicted
+    assert store.status(d) == "running"   # newly created
+
+
+def test_running_runs_not_evicted_even_at_capacity():
+    store = MemoryRunStore(max_runs=2)
+    a = store.create()  # running
+    b = store.create()  # running
+    # both running; a create at capacity cannot evict either → all retained
+    c = store.create()
+    assert store.status(a) == "running"
+    assert store.status(b) == "running"
+    assert store.status(c) == "running"
