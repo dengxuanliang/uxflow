@@ -50,7 +50,7 @@ def parse_trajectory(data: dict) -> Trajectory:
 
         if role == "assistant":
             tool_calls = msg.get("tool_calls", [])
-            if tool_calls:
+            if isinstance(tool_calls, list) and tool_calls:
                 for tc in tool_calls:
                     fn = tc.get("function", tc) if isinstance(tc, dict) else {}
                     steps.append(Step(

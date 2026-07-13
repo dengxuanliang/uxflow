@@ -58,3 +58,21 @@ def test_nonlist_messages_and_nondict_msg_skipped(tmp_path):
     assert "bad2" in ids
     bad2 = next(t for t in trajs if t.id == "bad2")
     assert bad2.step_count == 0
+
+
+def test_nonlist_tool_calls_does_not_abort_file(tmp_path):
+    # tool_calls that isn't a list must not crash parse_trajectory / abort the file
+    p = tmp_path / "bad_tc.jsonl"
+    p.write_text(
+        '{"id":"a","messages":[]}\n'
+        '{"id":"badtc","messages":[{"role":"assistant","tool_calls":42}]}\n'
+        '{"id":"b","messages":[{"role":"user","content":"hi"}]}\n'
+    )
+    trajs = load_trajectories(p)
+    ids = [t.id for t in trajs]
+    # non-list tool_calls is ignored (assistant msg kept as a plain step); the
+    # valid neighbors survive — the whole file is NOT aborted.
+    assert "a" in ids and "b" in ids
+    assert "badtc" in ids
+    badtc = next(t for t in trajs if t.id == "badtc")
+    assert badtc.step_count == 1  # the assistant msg becomes one plain step
