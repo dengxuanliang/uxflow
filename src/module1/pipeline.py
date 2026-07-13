@@ -127,9 +127,18 @@ class TrajectoryPipeline:
         # Offload the synchronous, CPU-bound index build (slicing + embedding)
         # to a thread so it doesn't block the event loop — keeps SSE progress
         # flushing and makes cancellation responsive at the thread boundary (C2).
-        # Thread-safety rests on C1's Semaphore: only one run touches this
-        # instance's _store/_traj_paths at a time.
-        await asyncio.to_thread(self._build_index, trajectory_paths)
+        # Shield it: a Python thread can't be interrupted, so if the run is
+        # cancelled mid-build we must let the thread finish before unwinding —
+        # otherwise the caller's Semaphore (C1) releases while this orphan thread
+        # still mutates self._store/_traj_paths, and the next run corrupts its
+        # index (reopens the C1 race). Thread-safety rests on that lock: only one
+        # run touches this instance's _store/_traj_paths at a time.
+        build = asyncio.ensure_future(asyncio.to_thread(self._build_index, trajectory_paths))
+        try:
+            await asyncio.shield(build)
+        except asyncio.CancelledError:
+            await build          # let the worker thread run to completion...
+            raise                # ...then propagate the cancellation
         if self._store.size == 0:
             return []
 
