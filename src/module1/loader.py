@@ -27,6 +27,8 @@ def load_trajectories(path: str | pathlib.Path) -> list[Trajectory]:
                 continue  # skip malformed JSON rather than abort the whole file
             if not isinstance(data, dict):
                 continue  # valid JSON but not a trajectory object (null/42/[..]/"s")
+            if not isinstance(data.get("messages", []), list):
+                continue  # messages must be a list; skip malformed rather than abort
             trajectories.append(parse_trajectory(data))
     return trajectories
 
@@ -41,6 +43,8 @@ def parse_trajectory(data: dict) -> Trajectory:
     step_idx = 0
 
     for msg in messages:
+        if not isinstance(msg, dict):
+            continue  # messages element must be an object; skip non-dict entries
         role = msg.get("role", "")
         content = msg.get("content", "") or ""
 
