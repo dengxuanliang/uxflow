@@ -137,8 +137,16 @@ class TrajectoryPipeline:
         try:
             await asyncio.shield(build)
         except asyncio.CancelledError:
-            await build          # let the worker thread run to completion...
-            raise                # ...then propagate the cancellation
+            # The worker thread can't be interrupted; keep waiting (shielded, so
+            # repeated cancels can't abandon it) until it truly finishes, then
+            # propagate. Otherwise the lock releases while the orphan thread still
+            # mutates self._store/_traj_paths → next run corrupts its index.
+            while not build.done():
+                try:
+                    await asyncio.shield(build)
+                except asyncio.CancelledError:
+                    continue
+            raise
         if self._store.size == 0:
             return []
 
