@@ -49,6 +49,17 @@ def test_new_root_when_far_from_all_roots():
     assert res.new_root is True
 
 
+def test_calibrated_mount_threshold_mounts_mid_similarity_child():
+    # Guards the real-Qwen calibration (mount_threshold default 0.50, see spec
+    # appendix §4): a true child sits at cosine ~0.55 to its root — above the
+    # calibrated 0.50 but BELOW the old 0.60. It MUST mount (new_leaf); if the
+    # default silently reverts to 0.60 this flips to new_root and fails here.
+    prop = _proposal([0.55, 0.835, 0.0])  # cosine to root [1,0,0] ≈ 0.55
+    res = resolve_proposal(prop, _labels())
+    assert res.kind == "new_leaf"
+    assert res.parent == "error_recovery"
+
+
 def test_thresholds_are_configurable():
     prop = _proposal([0.9, 0.1, 0.0])
     res = resolve_proposal(prop, _labels(), dedup_threshold=1.0)
