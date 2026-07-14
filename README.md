@@ -36,6 +36,10 @@ The core install is lightweight (httpx, datasketch, numpy) and needs no ML depen
 uv sync --extra local-embed    # or: pip install -e ".[local-embed]"
 ```
 
+## Data directory
+
+Module 0.5 (label self-evolution) persists to a single SQLite file. The default location follows the XDG spec: `~/.local/share/uxflow/uxflow.db`. Override it with the `UXFLOW_DB` environment variable or the `--db` flag of `uxflow-evolve`. The database is never tracked by git.
+
 ## Embedding backends
 
 Embedding is pluggable behind a single `Embedder` protocol in the `uxflow_embed` package:

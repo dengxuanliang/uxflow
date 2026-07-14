@@ -44,10 +44,12 @@ class TrajectoryPipeline:
         candidates = await pipeline.run(trajectory_paths=..., problem_specs=...)
     """
 
-    def __init__(self, config: PipelineConfig, gateway):
+    def __init__(self, config: PipelineConfig, gateway,
+                 store_factory: Callable[[], object] | None = None):
         self._config = config
         self._gateway = gateway
-        self._store = MemoryIndex()
+        self._store_factory = store_factory or MemoryIndex
+        self._store = self._store_factory()
         self._judge = Judge(
             gateway=gateway,
             model=config.judge_model,
@@ -55,6 +57,9 @@ class TrajectoryPipeline:
         )
         # Mapping: trajectory_id → source file path
         self._traj_paths: dict[str, str] = {}
+
+    def _reset_store(self):
+        self._store = self._store_factory()
 
     async def run(
         self,
@@ -76,7 +81,7 @@ class TrajectoryPipeline:
             List of SFTCandidate objects.
         """
         # Reset per-run state so reusing a pipeline instance doesn't accumulate.
-        self._store = MemoryIndex()
+        self._reset_store()
         self._traj_paths.clear()
 
         # Phase 1: Load + Slice + Sign + Index
@@ -122,7 +127,7 @@ class TrajectoryPipeline:
         is scored — lets a caller surface per-sub_problem progress during the
         judge-heavy phase. Default None keeps behavior unchanged.
         """
-        self._store = MemoryIndex()
+        self._reset_store()
         self._traj_paths.clear()
         # Offload the synchronous, CPU-bound index build (slicing + embedding)
         # to a thread so it doesn't block the event loop — keeps SSE progress

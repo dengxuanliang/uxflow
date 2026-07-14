@@ -1,4 +1,4 @@
-from module0.taxonomy import Taxonomy, TaxonomyLabel, TaxonomyStore
+from module0.taxonomy import Taxonomy, TaxonomyLabel, MemoryTaxonomyStore
 
 
 def _lbl(name, parent=None, emb=None):
@@ -16,20 +16,20 @@ def _base():
 
 
 def test_snapshot_returns_readonly_taxonomy():
-    store = TaxonomyStore(_base())
+    store = MemoryTaxonomyStore(_base())
     snap = store.snapshot()
     assert isinstance(snap, Taxonomy)
     assert snap.get("error_recovery") is not None
 
 
 def test_existing_labels_lists_current():
-    store = TaxonomyStore(_base())
+    store = MemoryTaxonomyStore(_base())
     names = {lbl.label for lbl in store.existing_labels()}
     assert names == {"error_recovery", "effective_error_fix"}
 
 
 def test_add_label_appends_and_bumps_patch_version():
-    store = TaxonomyStore(_base())
+    store = MemoryTaxonomyStore(_base())
     new = _lbl("handle_async_race", "error_recovery")
     store.add_label(new)
     assert store.snapshot().get("handle_async_race") is not None
@@ -37,14 +37,14 @@ def test_add_label_appends_and_bumps_patch_version():
 
 
 def test_add_label_does_not_touch_existing():
-    store = TaxonomyStore(_base())
+    store = MemoryTaxonomyStore(_base())
     store.add_label(_lbl("handle_async_race", "error_recovery"))
     assert store.snapshot().get("error_recovery").label == "error_recovery"
 
 
 def test_save_writes_contract_json(tmp_path):
     import json
-    store = TaxonomyStore(_base())
+    store = MemoryTaxonomyStore(_base())
     store.add_label(_lbl("handle_async_race", "error_recovery"))
     out = tmp_path / "tax.json"
     store.save(out)

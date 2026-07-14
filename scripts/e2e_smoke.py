@@ -29,7 +29,6 @@ from module1.pipeline import TrajectoryPipeline, PipelineConfig  # noqa: E402
 from module3.compose import GeneralDataConfig  # noqa: E402
 from module3.pipeline import select_final_dataset  # noqa: E402
 from module3.selection import SelectionConfig  # noqa: E402
-from module0.taxonomy import TaxonomyStore  # noqa: E402
 from module0_5 import (  # noqa: E402
     LabelProposal,
     ingest_proposal,
@@ -285,8 +284,15 @@ async def main():
             )
             print(f"→ module0 未提议, 注入兜底标签: {proposal.label}")
 
-        # ② 去重+挂载入库（真实 embedding）
-        store = TaxonomyStore(taxonomy)
+        # ② 去重+挂载入库（真实 embedding）—— SQLite 持久后端
+        import tempfile
+        from module0.sqlite_taxonomy import SqliteTaxonomyStore
+        from module1.sqlite_store import SqliteSliceStore
+
+        db_dir = tempfile.mkdtemp(prefix="uxflow_e2e_")
+        db_path = pathlib.Path(db_dir) / "e2e.db"
+
+        store = SqliteTaxonomyStore(db_path, seed=taxonomy)
         res = ingest_proposal(proposal, store, created_at="2026-07-10T00:00:00Z")
         print(f"\n② 入库判定: kind={res.kind}, parent={res.parent}, "
               f"maps_to={res.maps_to}")
@@ -295,7 +301,7 @@ async def main():
         if res.kind == "duplicate":
             print("   提议判为重复(映射到已有标签), 无新标签入库, 跳过 ③④。")
         else:
-            # ③ 回填前: 继承降权兜底（真实召回）
+            # ③ 回填前: 继承降权兜底（真实召回, 显示用 pipeline 内存索引）
             def _recall_for_label():
                 return pipeline._store.recall(
                     structured_filters={},
@@ -312,9 +318,20 @@ async def main():
                 print(f"    {h.signature.trajectory_id}/slice{h.signature.slice_index} "
                       f"score={h.rrf_score:.4f} labels={h.signature.capability_labels}")
 
-            # ④ 异步回填（真实 judge）
+            # 迁移 pipeline 内存签名到 SQLite slice store（真实回填在持久后端上跑）
+            sl_store = SqliteSliceStore(db_path)
+            sl_store.add_batch(list(pipeline._store._signatures))
+            for (tid, si), sl in pipeline._store._slice_source.items():
+                sl_store.set_slice_source(tid, si, sl)
+
+            # 维度守卫（契约 §6：切片 embedding 与词表 description embedding 同模型同维）
             new_label = store.snapshot().get(proposal.label)
-            bf = await run_backfill(new_label, pipeline._store, pipeline._judge)
+            if new_label.description_embedding and sl_store._dim is not None:
+                assert len(new_label.description_embedding) == sl_store._dim, (
+                    f"tax dim {len(new_label.description_embedding)} != slice dim {sl_store._dim}")
+
+            # ④ 异步回填（真实 judge, 在 SQLite slice store 上）
+            bf = await run_backfill(new_label, sl_store, pipeline._judge)
             print(f"\n④ 回填结果: screened={bf.candidates_screened}, "
                   f"judged_true={bf.judged_true}, written={bf.slices_written}, "
                   f"errors={bf.errors}")
@@ -328,6 +345,12 @@ async def main():
                 mark = " ← 精确命中(×1.0)" if proposal.label in (h.signature.capability_labels or []) else ""
                 print(f"    {h.signature.trajectory_id}/slice{h.signature.slice_index} "
                       f"score={h.rrf_score:.4f}{mark}")
+
+            # 重启存续：新开 store 读同一 db
+            reopened = SqliteTaxonomyStore(db_path)
+            assert reopened.snapshot().get(proposal.label) is not None
+            print(f"\n✓ 重启存续: {proposal.label} 仍在 db "
+                  f"(version={reopened.snapshot().version})")
 
         # ── Stats ────────────────────────────────────────────────────────
         _print_section("Gateway 统计")

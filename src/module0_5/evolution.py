@@ -37,7 +37,7 @@ def resolve_proposal(
     existing: list[TaxonomyLabel],
     *,
     dedup_threshold: float = 0.85,   # 契约 §5.3
-    mount_threshold: float = 0.60,   # 契约 §5.3
+    mount_threshold: float = 0.50,   # 契约 §5.3
 ) -> ProposalResolution:
     """判定：重复→映射已有 / 新叶子→挂父 / 新顶层→new_root。零写入。
 
@@ -76,7 +76,7 @@ def ingest_proposal(
     *,
     created_at: str,
     dedup_threshold: float = 0.85,
-    mount_threshold: float = 0.60,
+    mount_threshold: float = 0.50,
 ) -> ProposalResolution:
     """判定 + 写入。duplicate 丢弃不入库；new_leaf/new_root 转 TaxonomyLabel 入库。"""
     res = resolve_proposal(
