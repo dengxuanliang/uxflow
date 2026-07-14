@@ -28,7 +28,7 @@ async def evolve_once(
     created_at: str,
     now_fn: Callable[[], str],
     dedup_threshold: float = 0.85,
-    mount_threshold: float = 0.60,
+    mount_threshold: float = 0.50,
 ) -> dict:
     """② ingest each proposal, enqueue non-duplicates (priority=associated sub-problem count), ④ drain worker."""
     # priority = number of DISTINCT passed sub-problems referencing this label (spec §6.3).
