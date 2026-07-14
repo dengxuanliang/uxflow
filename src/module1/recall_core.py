@@ -5,9 +5,10 @@ SqliteSliceStore. Signatures take explicit ``all_signatures`` where IDF needs th
 full corpus document-frequency.
 
 NOTE: When migrating to a persistent index, query and stored vectors are no
-longer guaranteed to be same-source. Validate embedding dimension at add/load
-time (fail-loud on cross-dim mixing). Not needed for V1: vectors are computed on
-the fly from a single EmbeddingModel, so query and index dimensions always match.
+longer guaranteed to be same-source. ``vector_score`` therefore skips query
+vectors whose dimension does not match the candidate matrix (instead of raising
+a shape error). Callers should still validate embedding dimension at add/load
+time (fail-loud on cross-dim mixing among stored vectors).
 """
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 dengxuanliang
@@ -114,6 +115,7 @@ def vector_score(
         return {}
 
     cand_matrix = np.array(cand_embs, dtype=np.float32)  # (M, dim)
+    dim = cand_matrix.shape[1]
     # Normalize candidate embeddings
     norms = np.linalg.norm(cand_matrix, axis=1, keepdims=True)
     norms = np.where(norms == 0, 1.0, norms)
@@ -122,6 +124,10 @@ def vector_score(
     # Compute max cosine across all query embeddings
     max_scores = np.zeros(len(cand_embs), dtype=np.float32)
     for qe in query_embeddings:
+        if len(qe) != dim:
+            # persistent index: query/stored vectors may differ in dim.
+            # Skip mismatched query vectors instead of crashing the whole recall.
+            continue
         q_vec = np.array(qe, dtype=np.float32)
         q_norm = np.linalg.norm(q_vec)
         if q_norm > 0:

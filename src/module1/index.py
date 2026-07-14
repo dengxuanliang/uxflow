@@ -3,11 +3,12 @@
 V1 strategy: in-memory list + numpy. No ES/Qdrant dependency.
 Scales to ~10k signatures. For millions, swap to ES+Qdrant (same interface).
 
-NOTE: When migrating to a persistent index, query and stored vectors are no
-longer guaranteed to be same-source. Validate embedding dimension at
-add/load time (fail-loud on cross-dim mixing) and skip mismatched query
-vectors in _vector_score. Not needed for V1: vectors are computed on the fly
-from a single EmbeddingModel, so query and index dimensions always match.
+NOTE: Scoring now lives in module1.recall_core (shared with the future
+SqliteSliceStore). When migrating to a persistent index, query and stored
+vectors are no longer guaranteed to be same-source; recall_core.vector_score
+skips query vectors whose dimension does not match the candidate matrix.
+Callers should still validate embedding dimension at add/load time (fail-loud
+on cross-dim mixing among stored vectors).
 
 Recall pipeline:
   1. Structured filters (languages, tools_used, has_verification_step)
