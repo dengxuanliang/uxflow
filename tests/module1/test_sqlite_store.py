@@ -78,3 +78,14 @@ def test_satisfies_slicestore_protocol(tmp_path):
     from module1.store import SliceStore
     store = SqliteSliceStore(tmp_path / "t.db")
     assert isinstance(store, SliceStore)  # runtime_checkable Protocol
+
+
+def test_embedding_blob_survives_reopen_for_recall(tmp_path):
+    db = tmp_path / "t.db"
+    s1 = SqliteSliceStore(db)
+    s1.add_batch([_sig("A", 0, ["x"], [1.0, 0.0]),
+                  _sig("B", 0, ["y"], [0.0, 1.0])])
+    s2 = SqliteSliceStore(db)  # reopen: embeddings loaded from BLOB
+    hits = s2.recall(structured_filters={}, keywords=[],
+                     query_embeddings=[[1.0, 0.0]], top_n=1)
+    assert hits[0].signature.trajectory_id == "A"

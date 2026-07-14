@@ -97,7 +97,7 @@ class SqliteSliceStore:
     """Persistent SliceStore. Implements the SliceStore Protocol."""
 
     def __init__(self, db_path: str | pathlib.Path):
-        # isolation_level=None → autocommit; we control transactions explicitly where needed.
+        # isolation_level=None → autocommit: each statement commits immediately (single-writer V1).
         self._conn = sqlite3.connect(str(db_path), isolation_level=None)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
