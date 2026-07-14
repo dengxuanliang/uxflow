@@ -1,4 +1,4 @@
-from module0.taxonomy import TaxonomyLabel, TaxonomyStore, Taxonomy
+from module0.taxonomy import TaxonomyLabel, MemoryTaxonomyStore, Taxonomy
 from module0_5 import LabelProposal
 from module0_5.evolution import resolve_proposal, ingest_proposal
 
@@ -57,7 +57,7 @@ def test_thresholds_are_configurable():
 
 def _store():
     tax = Taxonomy(version="0.1.0", updated_at="2026-01-01T00:00:00Z", labels=_labels())
-    return TaxonomyStore(tax)
+    return MemoryTaxonomyStore(tax)
 
 
 def test_ingest_new_leaf_adds_to_store():

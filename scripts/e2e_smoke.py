@@ -29,7 +29,7 @@ from module1.pipeline import TrajectoryPipeline, PipelineConfig  # noqa: E402
 from module3.compose import GeneralDataConfig  # noqa: E402
 from module3.pipeline import select_final_dataset  # noqa: E402
 from module3.selection import SelectionConfig  # noqa: E402
-from module0.taxonomy import TaxonomyStore  # noqa: E402
+from module0.taxonomy import MemoryTaxonomyStore  # noqa: E402
 from module0_5 import (  # noqa: E402
     LabelProposal,
     ingest_proposal,
@@ -286,7 +286,7 @@ async def main():
             print(f"→ module0 未提议, 注入兜底标签: {proposal.label}")
 
         # ② 去重+挂载入库（真实 embedding）
-        store = TaxonomyStore(taxonomy)
+        store = MemoryTaxonomyStore(taxonomy)
         res = ingest_proposal(proposal, store, created_at="2026-07-10T00:00:00Z")
         print(f"\n② 入库判定: kind={res.kind}, parent={res.parent}, "
               f"maps_to={res.maps_to}")

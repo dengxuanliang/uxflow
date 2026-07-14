@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass
 
-from module0.taxonomy import Taxonomy, TaxonomyLabel, TaxonomyStore
+from module0.taxonomy import Taxonomy, TaxonomyLabel, MemoryTaxonomyStore
 from module0_5 import LabelProposal, ingest_proposal, rerank_with_inheritance, run_backfill
 from tests.module0_5.conftest import FakeJudge
 
@@ -32,7 +32,7 @@ class _Hit:
 
 async def test_0_5_closed_loop(populated_index):
     # ② ingest a new leaf under error_recovery
-    store = TaxonomyStore(_tax_with_family())
+    store = MemoryTaxonomyStore(_tax_with_family())
     prop = LabelProposal(label="handle_async_race", description="异步竞态",
                          parent="error_recovery", description_embedding=[0.8, 0.6],
                          keywords=["async", "race"], source_sub_problem_id="p1")

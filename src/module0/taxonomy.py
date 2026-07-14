@@ -15,8 +15,9 @@ from __future__ import annotations
 import json
 import pathlib
 from dataclasses import dataclass
+from typing import Protocol, runtime_checkable
 
-__all__ = ["Taxonomy", "TaxonomyLabel", "TaxonomyStore"]
+__all__ = ["Taxonomy", "TaxonomyLabel", "TaxonomyStore", "MemoryTaxonomyStore"]
 
 
 @dataclass(frozen=True)
@@ -102,7 +103,7 @@ class Taxonomy:
         return "\n".join(lines)
 
 
-class TaxonomyStore:
+class MemoryTaxonomyStore:
     """可变演化层。Taxonomy 保持只读；本类为唯一写入点。"""
 
     def __init__(self, taxonomy: Taxonomy):
@@ -157,3 +158,12 @@ def _bump_patch(version: str) -> str:
         return version  # non-standard version left as-is
     parts[2] = str(int(parts[2]) + 1)
     return ".".join(parts)
+
+
+@runtime_checkable
+class TaxonomyStore(Protocol):
+    """可变演化层接口。MemoryTaxonomyStore / SqliteTaxonomyStore 两实现。"""
+    def snapshot(self) -> "Taxonomy": ...
+    def existing_labels(self) -> list["TaxonomyLabel"]: ...
+    def add_label(self, label: "TaxonomyLabel") -> None: ...
+    def save(self, path) -> None: ...
