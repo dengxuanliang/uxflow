@@ -24,3 +24,9 @@ docs/architecture-uml.md
 
 # Large binary tool (re-downloadable from plantuml.com)
 plantuml.jar
+
+# Runtime data (SQLite backend) — never tracked
+*.db
+*.db-wal
+*.db-shm
+/data/
