@@ -20,6 +20,9 @@ onnx-embed = ["onnxruntime>=1.17"]  # reserved: no OnnxEmbedder backend yet
 dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "python-dotenv", "ruff"]
 service = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
 
+[project.scripts]
+uxflow-evolve = "uxflow_evolve:main"
+
 [project.urls]
 Repository = "https://github.com/dengxuanliang/uxflow"
 Issues = "https://github.com/dengxuanliang/uxflow/issues"
@@ -30,7 +33,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/llm_gateway", "src/module0", "src/module1", "src/module2", "src/module3", "src/uxflow_embed", "src/module0_5", "src/service"]
-force-include = { "src/uxflow_paths.py" = "uxflow_paths.py" }
+force-include = { "src/uxflow_paths.py" = "uxflow_paths.py", "scripts/uxflow_evolve.py" = "uxflow_evolve.py" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
