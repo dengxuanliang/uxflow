@@ -36,6 +36,10 @@ uv sync --extra dev            # or: pip install -e ".[dev]"
 uv sync --extra local-embed    # or: pip install -e ".[local-embed]"
 ```
 
+## 数据目录
+
+模块 0.5(标签自演化)持久化到单个 SQLite 文件。默认位置遵循 XDG 规范:`~/.local/share/uxflow/uxflow.db`。可通过 `UXFLOW_DB` 环境变量或 `uxflow-evolve` 的 `--db` 参数覆盖。该数据库从不纳入 git 跟踪。
+
 ## 嵌入后端
 
 嵌入能力通过 `uxflow_embed` 包中统一的 `Embedder` 协议实现可插拔:
