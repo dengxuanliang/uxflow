@@ -24,6 +24,9 @@ def test_complete_marks_done_and_persists(tmp_path):
     q.complete(job, result={"slices_written": 3}, now="t2")
     q2 = SqliteBackfillQueue(db)  # reopen
     assert q2.count_by_status("done") == 1
+    row = q2._conn.execute("SELECT result_json FROM backfill_jobs WHERE status='done'").fetchone()
+    import json
+    assert json.loads(row["result_json"]) == {"slices_written": 3}
 
 
 def test_fail_records_error_and_increments_attempts(tmp_path):
@@ -32,6 +35,7 @@ def test_fail_records_error_and_increments_attempts(tmp_path):
     job = q.claim(now="t1")
     q.fail(job, error="judge boom", now="t2")
     assert q.count_by_status("failed") == 1
+    assert job.attempts == 1  # claim incremented from 0
 
 
 def test_reset_stale_requeues_running(tmp_path):
