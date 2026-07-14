@@ -41,6 +41,8 @@ async def run_worker(
             await asyncio.sleep(poll_interval)
             continue
 
+        # snapshot() is outside the try/except by design: if it raises, the job
+        # stays 'running' and reset_stale requeues it on next startup (single-worker V1).
         new_label = taxonomy_store.snapshot().get(job.label)
         if new_label is None:
             queue.fail(job, error=f"label not found in taxonomy: {job.label}", now=now_fn())
