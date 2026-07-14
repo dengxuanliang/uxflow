@@ -33,41 +33,45 @@ def _iso_now() -> str:
 
 
 async def _amain(args) -> int:
-    from llm_gateway import LLMGateway, GatewayConfig
-    from module0 import QueryCompiler, Taxonomy
-    from module0.embedding import EmbeddingModel
-    from module0.sqlite_taxonomy import SqliteTaxonomyStore
-    from module1.sqlite_store import SqliteSliceStore
-    from module1.judge import Judge
-    from module0_5.queue import SqliteBackfillQueue
-    from module0_5.daemon import evolve_once
+    try:
+        from llm_gateway import LLMGateway, GatewayConfig
+        from module0 import QueryCompiler, Taxonomy
+        from module0.embedding import EmbeddingModel
+        from module0.sqlite_taxonomy import SqliteTaxonomyStore
+        from module1.sqlite_store import SqliteSliceStore
+        from module1.judge import Judge
+        from module0_5.queue import SqliteBackfillQueue
+        from module0_5.daemon import evolve_once
 
-    db_path = resolve_db_path(args.db)
-    ensure_parent(db_path)
-    print(f"DB: {db_path}")
+        db_path = resolve_db_path(args.db)
+        ensure_parent(db_path)
+        print(f"DB: {db_path}")
 
-    seed = Taxonomy.load(args.taxonomy) if args.taxonomy else None
-    slice_store = SqliteSliceStore(db_path)
-    taxonomy_store = SqliteTaxonomyStore(db_path, seed=seed)
-    queue = SqliteBackfillQueue(db_path)
+        seed = Taxonomy.load(args.taxonomy) if args.taxonomy else None
+        slice_store = SqliteSliceStore(db_path)
+        taxonomy_store = SqliteTaxonomyStore(db_path, seed=seed)
+        queue = SqliteBackfillQueue(db_path)
 
-    emb = EmbeddingModel()
-    config = GatewayConfig(
-        litellm_base=os.environ.get("LITELLM_BASE", "http://localhost:4000/v1"),
-        litellm_key=os.environ.get("LITELLM_KEY", ""),
-        transport_stuck_seconds=0)
-    async with LLMGateway(config) as gw:
-        compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy_store.snapshot(),
-                                 model=args.model, embedding_model=emb)
-        await compiler.compile(args.query)
-        proposals = list(compiler.label_proposals)
-        print(f"module0 提议 {len(proposals)} 个新标签")
+        emb = EmbeddingModel()
+        config = GatewayConfig(
+            litellm_base=os.environ.get("LITELLM_BASE", "http://localhost:4000/v1"),
+            litellm_key=os.environ.get("LITELLM_KEY", ""),
+            transport_stuck_seconds=0)
+        async with LLMGateway(config) as gw:
+            compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy_store.snapshot(),
+                                     model=args.model, embedding_model=emb)
+            await compiler.compile(args.query)
+            proposals = list(compiler.label_proposals)
+            print(f"module0 提议 {len(proposals)} 个新标签")
 
-        judge = Judge(gateway=gw, model=args.model)
-        summary = await evolve_once(proposals, slice_store, taxonomy_store, queue, judge,
-                                    created_at=_iso_now(), now_fn=_iso_now)
-        print(f"演化结果: {summary}")
-    return 0
+            judge = Judge(gateway=gw, model=args.model)
+            summary = await evolve_once(proposals, slice_store, taxonomy_store, queue, judge,
+                                        created_at=_iso_now(), now_fn=_iso_now)
+            print(f"演化结果: {summary}")
+        return 0
+    except Exception as e:  # noqa: BLE001 — CLI boundary: report, don't traceback
+        print(f"uxflow-evolve failed: {e}", file=sys.stderr)
+        return 1
 
 
 def main() -> int:
@@ -76,7 +80,8 @@ def main() -> int:
     p.add_argument("--db", default=None, help="SQLite DB path (overrides UXFLOW_DB/XDG)")
     p.add_argument("--taxonomy", default=None, help="seed taxonomy JSON (first run only)")
     p.add_argument("--model", default=os.environ.get("MODULE0_TEST_MODEL", "gpt-4o-mini"))
-    p.add_argument("--once", action="store_true", help="run one evolution pass and exit")
+    p.add_argument("--once", action="store_true",
+                   help="reserved; the CLI currently always runs a single pass")
     args = p.parse_args()
     return asyncio.run(_amain(args))
 
