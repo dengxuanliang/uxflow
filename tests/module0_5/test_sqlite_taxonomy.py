@@ -74,3 +74,26 @@ def test_ingest_proposal_on_sqlite_backend(tmp_path):
     res = ingest_proposal(prop, store, created_at="2026-07-13T00:00:00Z")
     assert res.kind in ("new_leaf", "new_root")  # orthogonal embedding never dedups
     assert store.snapshot().get("fix_runtime_exception") is not None
+
+
+def test_embedding_blob_roundtrip_across_reopen(tmp_path):
+    import pytest
+    db = tmp_path / "t.db"
+    SqliteTaxonomyStore(db, seed=_tax()).add_label(_new_label())
+    store2 = SqliteTaxonomyStore(db)  # reopen: label loaded from BLOB
+    lbl = store2.snapshot().get("fix_runtime_exception")
+    assert lbl.description_embedding == pytest.approx([0.9, 0.1], abs=1e-6)
+
+
+def test_save_exports_contract_json(tmp_path):
+    import json
+    store = SqliteTaxonomyStore(tmp_path / "t.db", seed=_tax())
+    store.add_label(_new_label())
+    out = tmp_path / "tax.json"
+    store.save(out)
+    data = json.loads(out.read_text())
+    assert data["version"] == "0.1.1"
+    names = [l["label"] for l in data["labels"]]
+    assert "error_recovery" in names and "fix_runtime_exception" in names
+    fix = next(l for l in data["labels"] if l["label"] == "fix_runtime_exception")
+    assert fix["parent"] == "error_recovery" and fix["taxonomy_extension"] is True
