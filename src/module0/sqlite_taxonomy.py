@@ -109,11 +109,11 @@ class SqliteTaxonomyStore:
         """Export contract §5.2 JSON (parity with MemoryTaxonomyStore.save)."""
         snap = self.snapshot()
         data = {"version": snap.version, "updated_at": snap.updated_at, "labels": [
-            {"label": l.label, "parent": l.parent, "new_root": l.new_root,
-             "description": l.description, "keywords": l.keywords,
-             "description_embedding": l.description_embedding,
-             "taxonomy_extension": l.taxonomy_extension, "created_at": l.created_at}
-            for l in snap.labels]}
+            {"label": lbl.label, "parent": lbl.parent, "new_root": lbl.new_root,
+             "description": lbl.description, "keywords": lbl.keywords,
+             "description_embedding": lbl.description_embedding,
+             "taxonomy_extension": lbl.taxonomy_extension, "created_at": lbl.created_at}
+            for lbl in snap.labels]}
         with open(path, "w") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
 

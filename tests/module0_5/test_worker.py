@@ -1,5 +1,4 @@
 # SPDX-License-Identifier: Apache-2.0
-import pytest
 
 from module0.taxonomy import Taxonomy, TaxonomyLabel
 from module0.sqlite_taxonomy import SqliteTaxonomyStore
@@ -64,7 +63,8 @@ async def test_worker_idempotent_on_rerun(tmp_path):
     ss.add_batch([_sig("A", ["TypeError"], [0.9, 0.1])])
     ss.set_slice_source("A", 0, Slice(trajectory_id="A", slice_index=0,
                         steps=[Step(index=0, role="user", content="x")], start_step=0, end_step=1))
-    ts = SqliteTaxonomyStore(db, seed=_tax()); ts.add_label(_new_label())
+    ts = SqliteTaxonomyStore(db, seed=_tax())
+    ts.add_label(_new_label())
     q = SqliteBackfillQueue(db)
     q.enqueue("fix_runtime_exception", priority=1, created_at="t0")
     await run_worker(q, ss, ts, FakeJudge([True]), now_fn=lambda: "t1", drain=True)

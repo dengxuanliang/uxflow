@@ -53,7 +53,7 @@ def test_seed_idempotent_does_not_reseed(tmp_path):
     # reopen WITH seed again: must not wipe/duplicate existing rows
     store2 = SqliteTaxonomyStore(db, seed=_tax())
     labels = store2.snapshot().labels
-    names = [l.label for l in labels]
+    names = [lbl.label for lbl in labels]
     assert names.count("error_recovery") == 1
     assert "fix_runtime_exception" in names
 
@@ -93,7 +93,7 @@ def test_save_exports_contract_json(tmp_path):
     store.save(out)
     data = json.loads(out.read_text())
     assert data["version"] == "0.1.1"
-    names = [l["label"] for l in data["labels"]]
+    names = [lbl["label"] for lbl in data["labels"]]
     assert "error_recovery" in names and "fix_runtime_exception" in names
-    fix = next(l for l in data["labels"] if l["label"] == "fix_runtime_exception")
+    fix = next(lbl for lbl in data["labels"] if lbl["label"] == "fix_runtime_exception")
     assert fix["parent"] == "error_recovery" and fix["taxonomy_extension"] is True
