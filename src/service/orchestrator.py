@@ -14,7 +14,7 @@ from typing import Any, Callable
 
 from service.viewmodel import build_inspector_view, build_trajectory_index
 
-__all__ = ["PipelineDeps", "run_pipeline"]
+__all__ = ["PipelineDeps", "run_pipeline", "run_search", "run_ingest"]
 
 
 @dataclass
@@ -24,6 +24,10 @@ class PipelineDeps:
     pipeline: Any                 # has async run_scored(*, trajectory_paths, problem_specs)
     select_fn: Callable          # select_final_dataset signature
     load_trajectories_fn: Callable  # load_trajectories(path) -> list[Trajectory]
+    problem_store: Any = None     # read/write problem manifest (search/ingest)
+    trajectory_store: Any = None  # persist trajectory steps (ingest)
+    judge_cache: Any = None       # pairwise judge verdict cache (search)
+    embedder: Any = None          # embed(text) -> list[float] for dedup
 
 
 def _spec_to_dict(spec: Any, *, id_prefix: str) -> dict:
@@ -151,3 +155,121 @@ async def run_pipeline(
         deps.load_trajectories_fn(trajectory_path)
     )
     return view, trajectories
+
+
+async def run_search(
+    question,
+    *,
+    deps: PipelineDeps,
+    emit: Callable[[dict], None],
+    run_id: str = "search",
+    tau_q: float = 0.90,
+    selection_config: Any = None,
+    general_config: Any = None,
+) -> tuple[dict, dict]:
+    """Read path (spec §7): dedup-aware compile → search → select → view.
+
+    只读铁律：全程绝不调 deps.problem_store.add — 预览不写库 (spec 决策1)。
+    Detail text is served lazily via TrajectoryStore, so the trajectory index
+    returned here is intentionally empty (batch4 app layer resolves it).
+    """
+    from service.dedup import ProblemCompiler, problem_id_of
+
+    emit({"stage": "search0", "status": "running", "msg": "分析问题...",
+          "index": 0, "total": 1})
+    pc = ProblemCompiler(
+        deps.compiler, deps.problem_store, deps.embedder,
+        tau_q=tau_q,
+        serialize_fn=lambda so, q: _spec_to_dict(so, id_prefix=f"{problem_id_of(q)}."),
+    )
+    spec, dedup = await pc.get_or_compile(question)
+    if dedup is not None:
+        emit({"stage": "search0", "status": "running",
+              "msg": f"命中已有问题 (相似度 {dedup['similarity']:.2f})"})
+    spec_lines = [spec]
+    all_sub = [sp for s in spec_lines for sp in s["sub_problems"]]
+    all_sub_ids = [sp["id"] for sp in all_sub]
+
+    scored = await deps.pipeline.search(
+        problem_specs=spec_lines, judge_cache=deps.judge_cache,
+        on_progress=lambda done, total: emit({
+            "stage": "search1", "status": "running",
+            "msg": f"检索 {done}/{total}", "index": done, "total": total}))
+
+    if selection_config is None or general_config is None:
+        from module3.selection import SelectionConfig
+        from module3.compose import GeneralDataConfig
+        selection_config = selection_config or SelectionConfig(
+            n=min(10, max(1, len(scored))), min_per_problem=1)
+        general_config = general_config or GeneralDataConfig(ratio=0.3, source_path=None)
+    select_result = deps.select_fn(
+        scored, sub_problem_ids=all_sub_ids,
+        selection=selection_config, general=general_config)
+
+    merged_spec = {"raw_input": question, "domain": "agentic_swe",
+                   "sub_problems": all_sub}
+    view = build_inspector_view(
+        run_id=run_id, spec=merged_spec, scored=scored, select_result=select_result)
+    view["mode"] = "search"
+    view["dedup"] = dedup
+    return view, {}     # 详情走 TrajectoryStore（不内联），批4 的 app 层处理
+
+
+async def run_ingest(
+    *,
+    manifest_lines: list[str] | None = None,
+    trajectory_path: str | pathlib.Path | None = None,
+    deps: PipelineDeps,
+    emit: Callable[[dict], None],
+    run_id: str = "ingest",
+    tau_q: float = 0.90,
+) -> tuple[dict, dict]:
+    """Write path (spec §7, D4 逐行隔离): persist trajectories + dedup-gated manifest.
+
+    Manifest lines are ingested one-by-one; a single line's failure is isolated
+    (counted, emitted) without aborting the rest of the batch.
+    """
+    from service.dedup import problem_id_of
+    from service.viewmodel import _step_to_dict
+
+    added = skipped = failed = 0
+
+    if trajectory_path is not None:
+        emit({"stage": "ingest_traj", "status": "running", "msg": "切片+签名+写库..."})
+
+        def on_traj(traj, src):
+            if deps.trajectory_store is not None:
+                deps.trajectory_store.upsert(
+                    traj.id, [_step_to_dict(s) for s in traj.steps], source_path=src)
+
+        deps.pipeline.ingest_trajectories([trajectory_path], on_trajectory=on_traj)
+
+    if manifest_lines:
+        for i, raw in enumerate(manifest_lines):
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                emb = deps.embedder.embed(line)
+                hit = deps.problem_store.nearest(emb)
+                if hit is not None and hit[1] >= tau_q:
+                    skipped += 1
+                    emit({"stage": "ingest_manifest", "status": "running",
+                          "msg": f"跳过重复: {line[:30]}"})
+                    continue
+                spec_obj = await deps.compiler.compile(line)
+                spec = _spec_to_dict(spec_obj, id_prefix=f"{problem_id_of(line)}.")
+                deps.problem_store.add(line, emb, spec)
+                added += 1
+                emit({"stage": "ingest_manifest", "status": "running",
+                      "msg": f"入库: {line[:30]}"})
+            except Exception as exc:  # noqa: BLE001 — D4 逐行隔离，单行失败不中断
+                failed += 1
+                emit({"stage": "ingest_manifest", "status": "running",
+                      "msg": f"第{i + 1}行失败: {exc}"})
+
+    emit({"stage": "done", "status": "ok",
+          "msg": f"入库 {added} 问题, 跳过 {skipped}, 失败 {failed}"})
+    view = {"mode": "ingest",
+            "summary": {"added": added, "skipped_dup": skipped, "failed": failed}}
+    return view, {}

@@ -25,13 +25,22 @@ def create_app(
     *,
     store: Any = None,
     run_fn: Callable | None = None,
+    search_fn: Callable | None = None,
+    ingest_fn: Callable | None = None,
     deps: Any = None,
+    tau_q: float = 0.90,
 ) -> FastAPI:
     """Build the app. Inject store/run_fn/deps for testing; defaults for prod."""
     store = store or MemoryRunStore()
     if run_fn is None:
         from service.orchestrator import run_pipeline
         run_fn = run_pipeline
+    if search_fn is None:
+        from service.orchestrator import run_search
+        search_fn = run_search
+    if ingest_fn is None:
+        from service.orchestrator import run_ingest
+        ingest_fn = run_ingest
 
     app = FastAPI(title="Trajectory Inspector")
 
@@ -81,6 +90,85 @@ def create_app(
             traj_path.unlink(missing_ok=True)
             _tasks.pop(run_id, None)
 
+    async def _bg_search(run_id: str, question: str):
+        # Mirror _background_run's lock/try-except-finally, but for the read path:
+        # no temp file to clean, and run_search does NOT emit its own done event
+        # (unlike run_ingest), so we append the terminal "done" ourselves.
+        def emit(ev: dict) -> None:
+            store.append_event(run_id, ev)
+        try:
+            if _run_lock.locked():
+                emit({"stage": "search0", "status": "running",
+                      "msg": "前一个任务运行中，排队等待…"})
+            async with _run_lock:      # serialize pipeline execution (C1)
+                view, trajectories = await search_fn(
+                    question, deps=deps, emit=emit, run_id=run_id, tau_q=tau_q)
+                store.set_view(run_id, view, trajectories)
+                store.append_event(run_id, {"stage": "done", "status": "ok"})
+                store.mark_done(run_id)
+        except asyncio.CancelledError:
+            store.append_event(run_id, {"stage": "done", "status": "cancelled",
+                                        "msg": "已停止"})
+            store.mark_error(run_id)
+        except Exception as exc:  # noqa: BLE001 — surface as error event, don't crash server
+            store.append_event(run_id, {"stage": "done", "status": "error",
+                                        "msg": str(exc)})
+            store.mark_error(run_id)
+        finally:
+            _tasks.pop(run_id, None)
+
+    async def _bg_ingest(run_id: str, manifest_text: str | None,
+                         traj_path: pathlib.Path | None):
+        # Mirror _background_run, but run_ingest already emits its own terminal
+        # "done" event — so the success path only set_view + mark_done (no extra
+        # done, to keep exactly one done in the SSE stream).
+        def emit(ev: dict) -> None:
+            store.append_event(run_id, ev)
+        try:
+            if _run_lock.locked():
+                emit({"stage": "ingest_traj", "status": "running",
+                      "msg": "前一个任务运行中，排队等待…"})
+            async with _run_lock:      # serialize pipeline execution (C1)
+                view, trajectories = await ingest_fn(
+                    manifest_lines=(manifest_text.splitlines()
+                                    if manifest_text else None),
+                    trajectory_path=traj_path,
+                    deps=deps, emit=emit, run_id=run_id, tau_q=tau_q)
+                store.set_view(run_id, view, {})
+                store.mark_done(run_id)
+        except asyncio.CancelledError:
+            store.append_event(run_id, {"stage": "done", "status": "cancelled",
+                                        "msg": "已停止"})
+            store.mark_error(run_id)
+        except Exception as exc:  # noqa: BLE001 — surface as error event, don't crash server
+            store.append_event(run_id, {"stage": "done", "status": "error",
+                                        "msg": str(exc)})
+            store.mark_error(run_id)
+        finally:
+            if traj_path is not None:
+                traj_path.unlink(missing_ok=True)
+            _tasks.pop(run_id, None)
+
+    def _finalize_simple(_t: asyncio.Task, rid: str) -> None:
+        # Safety net for search (no temp file): pop task, force terminal if the
+        # body never finalized (e.g. cancel delivered before the coroutine ran).
+        _tasks.pop(rid, None)
+        if store.status(rid) == "running":
+            store.append_event(rid, {"stage": "done", "status": "cancelled",
+                                     "msg": "已停止"})
+            store.mark_error(rid)
+
+    def _finalize_ingest(_t: asyncio.Task, rid: str,
+                         path: pathlib.Path | None) -> None:
+        # Safety net for ingest: mirror _finalize including temp cleanup.
+        if path is not None:
+            path.unlink(missing_ok=True)          # idempotent (missing_ok)
+        _tasks.pop(rid, None)
+        if store.status(rid) == "running":
+            store.append_event(rid, {"stage": "done", "status": "cancelled",
+                                     "msg": "已停止"})
+            store.mark_error(rid)
+
     @app.post("/runs")
     async def create_run(manifest: UploadFile, trajectories: UploadFile):
         raw = await manifest.read()
@@ -118,6 +206,61 @@ def create_app(
         task.add_done_callback(_finalize)
         return {"run_id": run_id}
 
+    @app.post("/search")
+    async def create_search(payload: dict):
+        question = (payload.get("question") or "").strip()
+        if not question:
+            raise HTTPException(status_code=400, detail="问题不能为空")
+        run_id = store.create()
+        task = asyncio.create_task(_bg_search(run_id, question))
+        _tasks[run_id] = task
+        task.add_done_callback(lambda t, rid=run_id: _finalize_simple(t, rid))
+        return {"run_id": run_id}
+
+    @app.post("/ingest")
+    async def create_ingest(manifest: UploadFile | None = None,
+                            trajectories: UploadFile | None = None):
+        if manifest is None and trajectories is None:
+            raise HTTPException(status_code=400, detail="至少上传一个文件")
+        manifest_text = None
+        if manifest is not None:
+            raw = await manifest.read()
+            try:
+                manifest_text = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                raise HTTPException(
+                    status_code=400,
+                    detail="用户清单必须是 UTF-8 编码的文本文件") from None
+        traj_path = None
+        if trajectories is not None:
+            traj_bytes = await trajectories.read()
+            tmp = tempfile.NamedTemporaryFile(
+                delete=False, suffix=".jsonl", mode="wb")
+            tmp.write(traj_bytes)
+            tmp.close()
+            traj_path = pathlib.Path(tmp.name)
+        run_id = store.create()
+        task = asyncio.create_task(_bg_ingest(run_id, manifest_text, traj_path))
+        _tasks[run_id] = task
+        task.add_done_callback(
+            lambda t, rid=run_id, p=traj_path: _finalize_ingest(t, rid, p))
+        return {"run_id": run_id}
+
+    @app.get("/stats")
+    async def get_stats():
+        # async (not sync def): sync endpoints run in a threadpool, but the SQLite
+        # store connections are bound to the event-loop thread (check_same_thread).
+        # Keeping this on the loop avoids "SQLite objects created in a thread can
+        # only be used in that same thread" — matches every other store-touching route.
+        problems = (deps.problem_store.count()
+                    if getattr(deps, "problem_store", None) else 0)
+        trajectories = (deps.trajectory_store.count()
+                        if getattr(deps, "trajectory_store", None) else 0)
+        signatures = getattr(getattr(deps, "pipeline", None), "_store", None)
+        sig_count = getattr(signatures, "size", 0) if signatures is not None else 0
+        return {"problems": problems, "trajectories": trajectories,
+                "signatures": sig_count}
+
     @app.post("/runs/{run_id}/cancel")
     async def cancel_run(run_id: str):
         if store.status(run_id) is None:
@@ -154,6 +297,11 @@ def create_app(
         if store.status(run_id) is None:
             raise HTTPException(status_code=404, detail="unknown run")
         traj = store.get_trajectory(run_id, trajectory_id)
+        if traj is None:
+            # 回退持久 store（search 结果的详情跨重启可读）
+            ts = getattr(deps, "trajectory_store", None)
+            if ts is not None:
+                traj = ts.get(trajectory_id)
         if traj is None:
             raise HTTPException(status_code=404, detail="unknown trajectory")
         return JSONResponse(traj)
