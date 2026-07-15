@@ -13,7 +13,7 @@ import pathlib
 from dataclasses import dataclass
 from typing import Callable
 
-from module1.models import SFTCandidate
+from module1.models import SFTCandidate, JudgeResult
 from module1.loader import load_trajectories
 from module1.slicer import slice_trajectory
 from module1.signature import extract_signature
@@ -23,6 +23,13 @@ from module2.models import ScoredCandidate
 from module2.rerank import rerank
 
 __all__ = ["TrajectoryPipeline", "PipelineConfig"]
+
+
+def _dict_to_judge_result(d: dict) -> "JudgeResult":
+    """Adapt a cached verdict dict back into a JudgeResult for rerank()."""
+    from module1.models import JudgeResult
+    return JudgeResult(match=d["match"], confidence=d["confidence"],
+                       spans=d["spans"], reasoning="cached")
 
 
 @dataclass
@@ -188,6 +195,21 @@ class TrajectoryPipeline:
                     self._store.add(sig)
                     self._store.set_slice_source(sl.trajectory_id, sl.slice_index, sl)
 
+    def ingest_trajectories(self, trajectory_paths, *, on_trajectory=None):
+        """写路径: 增量 build index 到当前 self._store（持久 store 由 store_factory 注入），
+        不 reset。on_trajectory(traj, source_path) 可选回调，用于把全文交给 TrajectoryStore。"""
+        for path in trajectory_paths:
+            path = pathlib.Path(path)
+            trajectories = load_trajectories(path)
+            for traj in trajectories:
+                self._traj_paths[traj.id] = str(path)
+                if on_trajectory is not None:
+                    on_trajectory(traj, str(path))
+                for sl in slice_trajectory(traj):
+                    sig = extract_signature(sl, embedding_model=self._config.embedding_model)
+                    self._store.add(sig)
+                    self._store.set_slice_source(sl.trajectory_id, sl.slice_index, sl)
+
     async def _process_sub_problem(
         self, sub_problem: dict, spec_id: str
     ) -> list[SFTCandidate]:
@@ -302,3 +324,81 @@ class TrajectoryPipeline:
         for sc in scored:
             sc.trajectory_path = self._traj_paths.get(sc.trajectory_id, "")
         return scored
+
+    async def _score_sub_problem_cached(self, sub_problem, judge_cache):
+        structured_filters = sub_problem.get("structured_filters", {})
+        keywords = sub_problem.get("keywords", [])
+        hyde_positive = sub_problem.get("hyde_positive", [])
+        target_capability = sub_problem.get("target_capability", [])
+        trajectory_signal = sub_problem.get("trajectory_signal", "")
+        sp_id = sub_problem.get("id", "unknown")
+
+        query_embeddings = []
+        if self._config.embedding_model and hyde_positive:
+            query_embeddings = self._config.embedding_model.embed_batch(hyde_positive)
+
+        hits = self._store.recall(
+            structured_filters=structured_filters, keywords=keywords,
+            query_embeddings=query_embeddings, top_n=self._config.recall_top_n)
+        if not hits:
+            return []
+
+        kept_hits, slices = [], []
+        for hit in hits:
+            sl = self._store.get_slice(hit.signature.trajectory_id, hit.signature.slice_index)
+            if sl is not None:
+                kept_hits.append(hit)
+                slices.append(sl)
+        if not slices:
+            return []
+
+        # D3: 按 (sp_id, traj_id, slice_idx) 查缓存，拆 cached / miss，严格保序
+        verdicts = [None] * len(kept_hits)
+        miss_idx, miss_slices = [], []
+        for i, hit in enumerate(kept_hits):
+            cached = judge_cache.get(sp_id, hit.signature.trajectory_id, hit.signature.slice_index)
+            if cached is not None:
+                verdicts[i] = _dict_to_judge_result(cached)
+            else:
+                miss_idx.append(i)
+                miss_slices.append(slices[i])
+
+        if miss_slices:
+            miss_results = await self._judge.judge_batch(
+                slices=miss_slices, target_capability=target_capability,
+                trajectory_signal=trajectory_signal)
+            for j, i in enumerate(miss_idx):
+                jr = miss_results[j]
+                verdicts[i] = jr
+                judge_cache.put(sp_id, kept_hits[i].signature.trajectory_id,
+                                kept_hits[i].signature.slice_index,
+                                {"match": jr.match, "confidence": jr.confidence, "spans": jr.spans})
+
+        # update_labels 只对 miss 的 match 项（cached 命中首次已写过，幂等，跳过省一次写）
+        for j, i in enumerate(miss_idx):
+            if verdicts[i].match:
+                self._store.update_labels(kept_hits[i].signature.trajectory_id,
+                                          kept_hits[i].signature.slice_index, target_capability)
+
+        # verdicts 现与 kept_hits 严格同序、无 None → 喂 rerank（rerank 要求等长同序）
+        scored = rerank(kept_hits, verdicts, sub_problem, trajectory_path="")
+        for sc in scored:
+            sc.trajectory_path = self._traj_paths.get(sc.trajectory_id, "")
+        return scored
+
+    async def search(self, *, problem_specs, judge_cache, on_progress=None):
+        """读路径: 对已持久的 self._store 召回+精判(带缓存)+score。不 reset、不 build_index。"""
+        all_scored = []
+        total = sum(len(s.get("sub_problems", [])) for s in problem_specs)
+        done = 0
+        for spec in problem_specs:
+            for sp in spec.get("sub_problems", []):
+                all_scored.extend(await self._score_sub_problem_cached(sp, judge_cache))
+                done += 1
+                if on_progress is not None:
+                    try:
+                        on_progress(done, total)
+                    except Exception:  # noqa: BLE001 — progress must never abort scoring
+                        pass
+        all_scored.sort(key=lambda c: c.relevance_score, reverse=True)
+        return all_scored

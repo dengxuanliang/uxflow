@@ -1,7 +1,37 @@
 // Trajectory Inspector frontend (spec §9, decisions 10-12).
 const $ = (id) => document.getElementById(id);
 
-const STAGES = ["module0", "module1", "module2", "module3", "done"];
+// Per-mode stage sets. `runs` = 单次检分老路径; `search`/`ingest` = 双模式新路径.
+// ingest_traj/ingest_manifest 两个后端事件都映射到单一 "ingest" 节点(见 handleEvent).
+const STAGE_SETS = {
+  runs: ["module0", "module1", "module2", "module3", "done"],
+  search: ["search0", "search1", "done"],
+  ingest: ["ingest", "done"],
+};
+const STAGE_LABELS = {
+  module0: "编译", module1: "召回·精判", module2: "软加分", module3: "优选",
+  done: "完成", search0: "分析", search1: "检索", ingest: "写库",
+};
+let STAGES = STAGE_SETS.runs;   // current mode's stages; setStage/resetProgress read this
+
+// Rebuild the #stepper DOM for the given mode's stage set.
+function setStepper(mode) {
+  STAGES = STAGE_SETS[mode] || STAGE_SETS.runs;
+  const el = $("stepper");
+  el.innerHTML = "";
+  STAGES.forEach((stage, i) => {
+    if (i > 0) {
+      const sep = document.createElement("div");
+      sep.className = "step-sep";
+      el.appendChild(sep);
+    }
+    const node = document.createElement("div");
+    node.className = "step-node";
+    node.dataset.stage = stage;
+    node.innerHTML = `<i></i><span>${STAGE_LABELS[stage] || stage}</span>`;
+    el.appendChild(node);
+  });
+}
 
 let state = {
   runId: null,
@@ -9,6 +39,7 @@ let state = {
   activeProblem: null,   // problem id
   activeCap: null,       // focused capability label (click a capability to focus)
   activeTraj: null,      // {trajectory_id, slice_index}
+  activeHighlight: -1,   // index into current .hit-span elements
   trajCache: {},
   // progress
   es: null,                  // active EventSource, so we can stop it
@@ -23,6 +54,12 @@ let state = {
 
 $("run").addEventListener("click", startRun);
 $("stop").addEventListener("click", stopRun);
+$("next-highlight").addEventListener("click", jumpToNextHighlight);
+$("btn-search").addEventListener("click", startSearch);
+$("btn-ingest").addEventListener("click", startIngest);
+$("question").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); startSearch(); }
+});
 
 // echo selected filenames into the slot chips
 for (const [id, slot, empty] of [
@@ -51,6 +88,7 @@ async function startRun() {
   $("run").disabled = true;
   $("progress").classList.remove("hidden");
   $("workspace").classList.add("hidden");
+  setStepper("runs");
   resetProgress();
   resetRunState();
   setStage("module0");
@@ -81,12 +119,141 @@ async function startRun() {
   subscribeEvents(run_id);
 }
 
+// ── Search mode (POST /search) ────────────────────────────────────
+async function startSearch() {
+  const q = $("question").value.trim();
+  if (!q) { alert("请先输入用户问题"); return; }
+
+  state.stopping = false;
+  state.runId = null;
+  const myGen = ++state.runGen;
+  $("run").disabled = true;
+  $("progress").classList.remove("hidden");
+  $("workspace").classList.add("hidden");
+  setStepper("search");
+  resetProgress();
+  resetRunState();
+  hideDedupBanner();
+  setStage("search0");
+  setMsg("分析中…");
+  $("stop").style.display = "";
+  startTimer();
+
+  let run_id;
+  try {
+    const resp = await fetch("/search", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q }),
+    });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    ({ run_id } = await resp.json());
+  } catch (err) {
+    setMsg("搜索失败: " + (err.message || err));
+    stopTimer();
+    $("stop").style.display = "none";
+    $("run").disabled = false;
+    return;
+  }
+
+  if (myGen !== state.runGen || state.stopping) {
+    try { await fetch(`/runs/${run_id}/cancel`, { method: "POST" }); } catch (_) {}
+    return;
+  }
+  state.runId = run_id;
+  subscribeEvents(run_id);
+}
+
+// ── Ingest mode (POST /ingest multipart) ──────────────────────────
+async function startIngest() {
+  const mf = $("manifest").files[0];
+  const tj = $("trajectories").files[0];
+  if (!mf && !tj) { alert("请至少选择清单或轨迹文件之一"); return; }
+  const fd = new FormData();
+  if (mf) fd.append("manifest", mf);
+  if (tj) fd.append("trajectories", tj);
+
+  state.stopping = false;
+  state.runId = null;
+  const myGen = ++state.runGen;
+  $("run").disabled = true;
+  $("progress").classList.remove("hidden");
+  $("workspace").classList.add("hidden");
+  setStepper("ingest");
+  resetProgress();
+  resetRunState();
+  hideDedupBanner();
+  setStage("ingest");
+  setMsg("上传中…");
+  $("stop").style.display = "";
+  startTimer();
+
+  let run_id;
+  try {
+    const resp = await fetch("/ingest", { method: "POST", body: fd });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    ({ run_id } = await resp.json());
+  } catch (err) {
+    setMsg("入库失败: " + (err.message || err));
+    stopTimer();
+    $("stop").style.display = "none";
+    $("run").disabled = false;
+    return;
+  }
+
+  if (myGen !== state.runGen || state.stopping) {
+    try { await fetch(`/runs/${run_id}/cancel`, { method: "POST" }); } catch (_) {}
+    return;
+  }
+  state.runId = run_id;
+  // 清空文件输入，便于下次选择（FormData 已构造，此处清空不影响本次上传）
+  clearIngestInputs();
+  subscribeEvents(run_id);
+}
+
+// Reset both ingest file inputs + their slot chips after a submit.
+function clearIngestInputs() {
+  for (const [id, slot, empty] of [
+    ["manifest", "slot-manifest", "点击选择文件…"],
+    ["trajectories", "slot-trajectories", "点击选择文件…"],
+  ]) {
+    $(id).value = "";
+    $("name-" + id).textContent = empty;
+    $(slot).classList.remove("filled");
+  }
+}
+
+// ── Stats bar (GET /stats) ────────────────────────────────────────
+async function loadStats() {
+  try {
+    const resp = await fetch("/stats");
+    if (!resp.ok) return;
+    const s = await resp.json();
+    $("stats-bar").textContent =
+      `库中 ${s.problems} 问题 · ${s.trajectories} 轨迹 · ${s.signatures} 切片`;
+  } catch (_) { /* stats are best-effort */ }
+}
+
+function showDedupBanner(dedup) {
+  const el = $("dedup-banner");
+  const sim = (dedup.similarity ?? 0).toFixed(2);
+  el.innerHTML =
+    `<span class="dedup-text">≈ 与已有问题高度重复：${escapeHtml(dedup.matched_question)}` +
+    `（相似度 ${sim}）</span>` +
+    `<button class="dedup-close" type="button" aria-label="关闭">✕</button>`;
+  el.querySelector(".dedup-close").onclick = hideDedupBanner;
+  el.classList.remove("hidden");
+}
+function hideDedupBanner() { $("dedup-banner").classList.add("hidden"); }
+
 function resetRunState() {
   state.view = null;
   state.activeProblem = null;
   state.activeCap = null;
   state.activeTraj = null;
+  state.activeHighlight = -1;
   state.trajCache = {};
+  updateHighlightTools();
 }
 
 function resetProgress() {
@@ -186,7 +353,10 @@ async function stopRun() {
 }
 
 function handleEvent(ev) {
-  if (ev.stage && ev.stage !== "done") setStage(ev.stage);
+  // ingest 后端发 ingest_traj/ingest_manifest 两种阶段 → 统一映射到 "ingest" 节点
+  let stage = ev.stage;
+  if (stage === "ingest_traj" || stage === "ingest_manifest") stage = "ingest";
+  if (stage && stage !== "done") setStage(stage);
   setMsg(ev.msg || ev.status || ev.stage);
 
   const total = typeof ev.total === "number" ? ev.total : 0;
@@ -230,8 +400,25 @@ async function loadView(runId, myGen) {
   const resp = await fetch(`/runs/${runId}/view`);
   if (myGen !== state.runGen) return;   // a newer run started during the fetch — drop stale view (I5)
   state.view = await resp.json();
+
+  // ingest 模式：不渲染三栏，仅提示汇总 + 刷新状态条
+  if (state.view.mode === "ingest") {
+    const s = state.view.summary || {};
+    $("workspace").classList.add("hidden");
+    hideDedupBanner();
+    setMsg(`入库完成：新增 ${s.added ?? 0} · 跳过重复 ${s.skipped_dup ?? 0} · 失败 ${s.failed ?? 0}`);
+    loadStats();
+    return;
+  }
+
+  // search / 老 runs 模式：三栏渲染
   $("progress").classList.add("hidden");
   $("workspace").classList.remove("hidden");
+
+  // search 模式的问题去重提示
+  if (state.view.dedup) showDedupBanner(state.view.dedup);
+  else hideDedupBanner();
+
   renderManifest();
   renderProblems();
   $("hits").innerHTML = '<div class="empty-hint">← 选一个问题</div>';
@@ -257,7 +444,7 @@ function renderProblems() {
     pd.className = "problem" + (p.id === state.activeProblem ? " active" : "");
     pd.innerHTML =
       `<button class="p-detail" title="查看 module0 编译详情">详情</button>` +
-      `<span class="p-conf">${(p.confidence ?? 0).toFixed(2)}</span>` +
+      `<span class="p-conf" title="Module0 子问题编译置信度，不代表轨迹命中质量">置信度 ${(p.confidence ?? 0).toFixed(2)}</span>` +
       `<span class="p-num">${i + 1}.</span> ${escapeHtml(p.failure_summary)}`;
     pd.onclick = () => selectProblem(p.id);
     pd.querySelector(".p-detail").onclick = (e) => {
@@ -286,13 +473,16 @@ function selectProblem(pid) {
   state.activeProblem = pid;
   state.activeCap = null;
   state.activeTraj = null;
+  state.activeHighlight = -1;
   renderProblems();
   renderHits();
   $("detail").innerHTML = "";
+  updateHighlightTools();
 }
 
 function focusCapability(pid, label) {
   state.activeCap = (state.activeCap === label) ? null : label;
+  state.activeHighlight = -1;
   renderProblems();
   renderHits();
   renderDetail();
@@ -345,6 +535,7 @@ function renderHits() {
 
 async function selectTrajectory(hit) {
   state.activeTraj = { trajectory_id: hit.trajectory_id, slice_index: hit.slice_index };
+  state.activeHighlight = -1;
   await ensureTrajectory(hit.trajectory_id);
   renderHits();
   renderDetail();
@@ -373,19 +564,48 @@ function spansForStep(stepIndex, hit) {
   return out;
 }
 
+// The focused loss_mask spans for the active trajectory, deduped by
+// (start_step,end_step) and sorted — these are the jump units (one span,
+// possibly spanning several steps, counts as ONE highlight; decision: span-level).
+function currentFocusedSpans() {
+  if (!state.activeTraj) return [];
+  const hit = currentHits().find(
+    (h) => h.trajectory_id === state.activeTraj.trajectory_id
+      && h.slice_index === state.activeTraj.slice_index);
+  if (!hit) return [];
+  const seen = new Map();
+  for (const cap of hit.caps) {
+    const focused = !state.activeCap || cap.label === state.activeCap;
+    if (!focused) continue;   // only focused-capability spans are jump targets
+    for (const s of (cap.spans || [])) {
+      const key = `${s.start_step}#${s.end_step}`;
+      if (!seen.has(key)) seen.set(key, { start: s.start_step, end: s.end_step });
+    }
+  }
+  return Array.from(seen.values()).sort(
+    (a, b) => a.start - b.start || a.end - b.end);
+}
+
 // ── Column 3: trajectory detail with step-level highlight ─────────
 function renderDetail() {
   const el = $("detail");
   el.innerHTML = "";
-  if (!state.activeTraj) return;
+  if (!state.activeTraj) {
+    updateHighlightTools();
+    return;
+  }
   const traj = state.trajCache[cacheKey(state.activeTraj.trajectory_id)];
-  if (!traj) return;
+  if (!traj) {
+    updateHighlightTools();
+    return;
+  }
   const hit = currentHits().find(
     (h) => h.trajectory_id === state.activeTraj.trajectory_id
       && h.slice_index === state.activeTraj.slice_index);
 
   for (const step of traj.steps) {
     const sd = document.createElement("div");
+    sd.dataset.stepIndex = String(step.index);   // for span-based jump targeting
     let cls = "step " + step.role;
     const caps = hit ? spansForStep(step.index, hit) : [];
     const focusedCaps = caps.filter((c) => c.focused);
@@ -423,6 +643,55 @@ function renderDetail() {
     }
     el.appendChild(sd);
   }
+  updateHighlightTools();
+}
+
+// Mark every step DOM element covered by the given span as the "current" highlight.
+function markCurrentSpan(span) {
+  for (const el of document.querySelectorAll("#detail .step")) {
+    const idx = Number(el.dataset.stepIndex);
+    const inSpan = span && idx >= span.start && idx <= span.end;
+    el.classList.toggle("hit-current", !!inSpan);
+  }
+}
+
+function updateHighlightTools() {
+  const tools = $("detail-tools");
+  const btn = $("next-highlight");
+  const count = $("highlight-count");
+  if (!tools || !btn || !count) return;
+
+  const spans = currentFocusedSpans();   // jump units are spans, not steps
+  const total = spans.length;
+  tools.classList.toggle("hidden", !state.activeTraj);
+  btn.disabled = total === 0;
+
+  if (total === 0) {
+    state.activeHighlight = -1;
+    count.textContent = "高亮 0/0";
+    markCurrentSpan(null);
+    return;
+  }
+  if (state.activeHighlight >= total) state.activeHighlight = total - 1;
+  const current = state.activeHighlight >= 0 ? state.activeHighlight + 1 : 0;
+  count.textContent = `高亮 ${current}/${total}`;
+
+  markCurrentSpan(state.activeHighlight >= 0 ? spans[state.activeHighlight] : null);
+}
+
+function jumpToNextHighlight() {
+  const spans = currentFocusedSpans();
+  if (!spans.length) {
+    updateHighlightTools();
+    return;
+  }
+  state.activeHighlight = (state.activeHighlight + 1) % spans.length;
+  updateHighlightTools();
+  // Scroll to the first step of the target span.
+  const span = spans[state.activeHighlight];
+  const target = document.querySelector(
+    `#detail .step[data-step-index="${span.start}"]`);
+  if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
 // ── utils ─────────────────────────────────────────────────────────
@@ -490,3 +759,6 @@ $("compile-modal").addEventListener("click", (e) => {
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeCompileModal();
 });
+
+// initial stats-bar populate
+loadStats();

@@ -30,3 +30,4 @@ plantuml.jar
 *.db-wal
 *.db-shm
 /data/
+/dataset/
