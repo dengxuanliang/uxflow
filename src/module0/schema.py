@@ -171,14 +171,22 @@ def _parse_structured_filters(d: dict | None) -> StructuredFilters:
 
 
 def _parse_rubric(d: dict | None) -> CapabilityRubric | None:
-    """Rebuild CapabilityRubric from nested dict; None (or missing) stays None."""
+    """Rebuild CapabilityRubric from nested dict; None (or missing) stays None.
+
+    capability_kind 不在 CAPABILITY_KINDS 时视为结构非法 → raise ValueError（LLM 输出
+    重建入口做校验，不动 dataclass 的构造点）。compiler 的 _parse_optional 已吞 ValueError
+    → 降级 rubric=None（不 drop 整条 sub_problem）。
+    """
     if not d:
         return None
+    kind = d["capability_kind"]
+    if kind not in CAPABILITY_KINDS:
+        raise ValueError(f"invalid capability_kind: {kind!r}")
     return CapabilityRubric(
         positive_criteria=d["positive_criteria"],
         negative_criteria=d["negative_criteria"],
         decisive_evidence=d["decisive_evidence"],
-        capability_kind=d["capability_kind"],
+        capability_kind=kind,
     )
 
 

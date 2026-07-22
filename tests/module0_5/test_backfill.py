@@ -53,7 +53,7 @@ async def test_backfill_judge_failure_returns_errors_not_crash(populated_index):
 
 async def test_backfill_judge_length_mismatch_recorded(populated_index):
     class ShortJudge:
-        async def judge_batch(self, *, slices, target_capability, trajectory_signal):
+        async def judge_batch(self, *, slices, target_capability, trajectory_signal, rubric=None):
             from module1.models import JudgeResult
             # returns FEWER results than slices submitted
             return [JudgeResult(match=True, confidence=0.9, spans=[], reasoning="")]

@@ -47,6 +47,8 @@ def rerank(
                 judge_match=jr.match,
                 embedding=hit.signature.embedding,
                 bm25_tokens=hit.signature.bm25_tokens,
+                evidence_step=jr.evidence_step,
+                criteria_hit=jr.criteria_hit,
             )
         )
     scored.sort(key=lambda c: c.relevance_score, reverse=True)

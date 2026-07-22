@@ -19,6 +19,7 @@ __all__ = ["Judge", "_build_judge_prompt", "_parse_judge_response"]
 
 _DEFAULT_BATCH_SIZE = 3
 
+# 旧 system prompt：rubric=None（无判据卡）路径逐字沿用，保证向后兼容行为与改动前一致。
 _JUDGE_SYSTEM_PROMPT = """你是一个 SFT 数据质量评审员。你的任务是判断给定的轨迹切片是否正向演示了目标能力。
 
 判断标准：
@@ -30,6 +31,32 @@ _JUDGE_SYSTEM_PROMPT = """你是一个 SFT 数据质量评审员。你的任务�
 {"match": bool, "confidence": float, "spans": [{"start_step": int, "end_step": int}], "reasoning": string}
 
 多个切片时输出 JSON 数组。"""
+
+# 新 system prompt：rubric（判据卡）在场时启用，三步走判定。仅当 _build_judge_prompt
+# 注入了 rubric 对照段时使用；无 rubric 时走上面的旧 prompt（判据卡方案 PR-3）。
+_JUDGE_SYSTEM_PROMPT_RUBRIC = """你是一个 SFT 数据质量评审员。给你一张能力"判据卡（rubric）"和若干轨迹切片，\
+判断每个切片是否**真正正向演示**了目标能力，并把证据精确定位到决策步。严格按以下三步走：
+
+① 对照：逐条核对切片是否满足 rubric 的 positive_criteria（正向判据），是否踩中 negative_criteria（反例/失败模式）。\
+擦边、"只是含有相关上下文"、平淡过渡都不算满足——必须有明确证据支撑某条 positive_criteria。
+
+② 定位：指出决定性证据在第几步（evidence_step）。这一步是"证明该能力被演示"的关键决策/推理步。\
+**如果指不出明确的决定性步，则 match=false**（宁缺毋滥，杀掉"看到超时就说 Found it"这类伪相关擦边片）。
+
+③ 收窄 mask：spans 只圈**决定性步的 assistant 决策/推理那 1-2 步**。工具输出 dump、环境返回、观测结果\
+是 context 不是 target，一律排除在 spans 之外。
+
+按 capability_kind 调整判读视角（仅影响你找哪类证据，不改变判定标准）：
+- presence（有痕）：找正向文本/结构标记本身，如"先写测试"。证据 = 该正向行为出现的决策步。
+- avoidance（无痕）：正例 = 坏模式的"缺席"。找"本可犯错的锚点 + 其后没犯错的枢轴步"，mask 圈枢轴步。
+- recovery（转折）：找 error → 正确处置的转折。mask 圈"处置"那一步。
+
+对每个切片，输出 JSON 格式（criteria_hit 填命中的 positive_criteria 原文，evidence_step 填决定性步号，\
+指不出则 evidence_step=null 且 match=false）：
+{"match": bool, "confidence": float, "evidence_step": int|null, "criteria_hit": [string], \
+"spans": [{"start_step": int, "end_step": int}], "reasoning": string}
+
+多个切片时输出 JSON 数组（顺序与切片一致）。"""
 
 
 class Judge:
@@ -46,11 +73,21 @@ class Judge:
         slices: list[Slice],
         target_capability: list[str],
         trajectory_signal: str,
+        rubric: dict | None = None,
     ) -> list[JudgeResult]:
         """Judge multiple slices, batching into LLM calls.
 
         Returns one JudgeResult per input slice, in the same order.
+
+        rubric is the serialized CapabilityRubric dict (positive_criteria /
+        negative_criteria / decisive_evidence / capability_kind) or None. When
+        None, the judge falls back to the legacy prompt for backward
+        compatibility (behavior identical to before the rubric card feature).
         """
+        # rubric 在场 → 三步走 system prompt；None → 旧 prompt（逐字向后兼容）。
+        system_prompt = (
+            _JUDGE_SYSTEM_PROMPT_RUBRIC if rubric is not None else _JUDGE_SYSTEM_PROMPT
+        )
         all_results: list[JudgeResult] = []
 
         for i in range(0, len(slices), self._batch_size):
@@ -59,9 +96,10 @@ class Judge:
                 slices=batch,
                 target_capability=target_capability,
                 trajectory_signal=trajectory_signal,
+                rubric=rubric,
             )
             messages = [
-                {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ]
 
@@ -85,11 +123,38 @@ def _build_judge_prompt(
     slices: list[Slice],
     target_capability: list[str],
     trajectory_signal: str,
+    rubric: dict | None = None,
 ) -> str:
-    """Build the user prompt for judge LLM call."""
+    """Build the user prompt for judge LLM call.
+
+    rubric 到这里是 **dict**（经 _spec_to_dict 序列化，非 CapabilityRubric 对象），
+    按 dict 形状消费（rubric["positive_criteria"]，不是 .positive_criteria）。None
+    时不注入对照段，退化为旧格式（向后兼容）。
+    """
     parts = []
     parts.append(f"目标能力: {', '.join(target_capability)}")
     parts.append(f"轨迹信号: {trajectory_signal}")
+
+    if rubric is not None:
+        parts.append("")
+        parts.append("=== 能力判据卡（rubric）===")
+        kind = rubric.get("capability_kind", "")
+        if kind:
+            parts.append(f"capability_kind: {kind}")
+        positive = rubric.get("positive_criteria") or []
+        if positive:
+            parts.append("positive_criteria（正向判据，需明确满足）:")
+            for c in positive:
+                parts.append(f"  - {c}")
+        negative = rubric.get("negative_criteria") or []
+        if negative:
+            parts.append("negative_criteria（反例/失败模式，踩中则不算）:")
+            for c in negative:
+                parts.append(f"  - {c}")
+        decisive = rubric.get("decisive_evidence", "")
+        if decisive:
+            parts.append(f"decisive_evidence（决定性证据形态）: {decisive}")
+
     parts.append("")
 
     for i, s in enumerate(slices):
@@ -137,6 +202,8 @@ def _parse_judge_response(raw: str | None, n_expected: int) -> list[JudgeResult]
                     confidence=float(item.get("confidence", 0.0)),
                     spans=_clean_spans(item.get("spans")),
                     reasoning=str(item.get("reasoning", "")),
+                    evidence_step=_clean_evidence_step(item.get("evidence_step")),
+                    criteria_hit=_clean_criteria_hit(item.get("criteria_hit")),
                 ))
             except (ValueError, TypeError):
                 results.append(JudgeResult(
@@ -166,6 +233,24 @@ def _clean_spans(raw) -> list[dict]:
             continue
         cleaned.append({"start_step": start, "end_step": end})
     return cleaned
+
+
+def _clean_evidence_step(raw) -> int | None:
+    """Coerce evidence_step to int; missing/null/malformed → None (缺失降级)."""
+    if raw is None:
+        return None
+    if isinstance(raw, bool):  # bool is int subclass; reject explicitly
+        return None
+    if isinstance(raw, int):
+        return raw
+    return None
+
+
+def _clean_criteria_hit(raw) -> list[str]:
+    """Keep only string entries; missing/malformed → [] (缺失降级)."""
+    if not isinstance(raw, list):
+        return []
+    return [c for c in raw if isinstance(c, str)]
 
 
 def _extract_json(text: str) -> str:

@@ -10,6 +10,7 @@ from module0.schema import (
     TOOLS_USED,
     DROP_REASONS,
     validate_problem_spec,
+    _parse_rubric,
 )
 
 
@@ -213,6 +214,31 @@ def test_validate_problem_spec_rebuilds_nested_rubric_and_evidence():
     assert sp.rubric.capability_kind == "avoidance"
     assert isinstance(sp.failure_evidence, LabelEvidence)
     assert sp.failure_evidence.evidence_steps == [2, 4]
+
+
+# ── PR-3 (F)：_parse_rubric 对非法 capability_kind 抛 ValueError（降级入口）──
+
+def test_parse_rubric_valid_kind():
+    r = _parse_rubric({
+        "positive_criteria": ["p"], "negative_criteria": ["n"],
+        "decisive_evidence": "d", "capability_kind": "recovery",
+    })
+    assert isinstance(r, CapabilityRubric)
+    assert r.capability_kind == "recovery"
+
+
+def test_parse_rubric_none_stays_none():
+    assert _parse_rubric(None) is None
+    assert _parse_rubric({}) is None
+
+
+def test_parse_rubric_invalid_kind_raises_value_error():
+    """capability_kind 不在 CAPABILITY_KINDS → ValueError（供 compiler _parse_optional 吞成 None）。"""
+    with pytest.raises(ValueError):
+        _parse_rubric({
+            "positive_criteria": ["p"], "negative_criteria": ["n"],
+            "decisive_evidence": "d", "capability_kind": "bogus_kind",
+        })
 
 
 def test_validate_problem_spec_missing_optional_fields_stay_none():

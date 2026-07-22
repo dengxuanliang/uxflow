@@ -10,7 +10,7 @@ from module1.models import Slice, Step, TrajectorySignature, JudgeResult
 
 class FakeJudge:
     def __init__(self, matches): self._m = matches
-    async def judge_batch(self, *, slices, target_capability, trajectory_signal):
+    async def judge_batch(self, *, slices, target_capability, trajectory_signal, rubric=None):
         return [JudgeResult(match=self._m[i] if i < len(self._m) else False,
                             confidence=0.9, spans=[], reasoning="")
                 for i in range(len(slices))]

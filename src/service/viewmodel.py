@@ -75,6 +75,10 @@ def build_inspector_view(
                     "judge_confidence": c.judge_confidence,
                     "selected": (c.trajectory_id, c.slice_index, sp_id) in selected_keys,
                     "loss_mask_spans": spans,
+                    # 可回溯字段：judge 定位的决定性步 + 命中的 rubric 判据，供人审跳到证据。
+                    # 老 ScoredCandidate（无此二字段）用 getattr 降级，向后兼容。
+                    "evidence_step": getattr(c, "evidence_step", None),
+                    "criteria_hit": list(getattr(c, "criteria_hit", []) or []),
                 }
         sub_hits = list(seen.values())
 

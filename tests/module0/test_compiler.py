@@ -532,6 +532,30 @@ async def test_compile_structurally_wrong_rubric_type_degrades(taxonomy):
     assert spec.sub_problems[0].rubric is None
 
 
+async def test_compile_invalid_capability_kind_degrades_to_none_not_drop(taxonomy):
+    """PR-3 (F)：非法 capability_kind → _parse_rubric 抛 ValueError → _parse_optional 吞成
+    rubric=None，sub_problem 不被 drop（compiler 侧降级，不丢合格问题）。"""
+    c2 = '''[{
+        "id": "p1",
+        "target_capability": ["valid_syntax_in_toolcall"],
+        "trajectory_signal": "s",
+        "hyde_positive": ["片段一超过二十字符的假设正例轨迹", "片段二超过二十字符的假设正例轨迹"],
+        "keywords": ["k"],
+        "structured_filters": {},
+        "confidence": 0.92,
+        "route": "pass",
+        "rubric": {"positive_criteria": ["p"], "negative_criteria": ["n"],
+                   "decisive_evidence": "d", "capability_kind": "not_a_real_kind"}
+    }]'''
+    gw = FakeGateway([_C1_OK, c2])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    # 不 drop：合格问题保留，只是 rubric 降级为 None
+    assert len(spec.sub_problems) == 1
+    assert len(compiler.dropped_records) == 0
+    assert spec.sub_problems[0].rubric is None
+
+
 async def test_compile_no_trajectory_evidence_drop_via_route(taxonomy):
     """决策 6：Call 2 判定认领不到证据 → route=drop + no_trajectory_evidence。
     这走既有 route!=pass 的 _record_dropped 分流（非解析降级），落审计桶。"""

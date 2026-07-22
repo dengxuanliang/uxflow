@@ -29,7 +29,9 @@ def _dict_to_judge_result(d: dict) -> "JudgeResult":
     """Adapt a cached verdict dict back into a JudgeResult for rerank()."""
     from module1.models import JudgeResult
     return JudgeResult(match=d["match"], confidence=d["confidence"],
-                       spans=d["spans"], reasoning="cached")
+                       spans=d["spans"], reasoning="cached",
+                       evidence_step=d.get("evidence_step"),
+                       criteria_hit=d.get("criteria_hit") or [])
 
 
 @dataclass
@@ -219,6 +221,7 @@ class TrajectoryPipeline:
         hyde_positive = sub_problem.get("hyde_positive", [])
         target_capability = sub_problem.get("target_capability", [])
         trajectory_signal = sub_problem.get("trajectory_signal", "")
+        rubric = sub_problem.get("rubric")  # dict | None（判据卡，透传给 judge）
         sub_problem_id = sub_problem.get("id", "unknown")
 
         # Compute query embeddings from hyde_positive (if embedding model available)
@@ -254,6 +257,7 @@ class TrajectoryPipeline:
             slices=recalled_slices,
             target_capability=target_capability,
             trajectory_signal=trajectory_signal,
+            rubric=rubric,
         )
 
         # Collect matches into SFTCandidates
@@ -280,6 +284,7 @@ class TrajectoryPipeline:
         hyde_positive = sub_problem.get("hyde_positive", [])
         target_capability = sub_problem.get("target_capability", [])
         trajectory_signal = sub_problem.get("trajectory_signal", "")
+        rubric = sub_problem.get("rubric")  # dict | None（判据卡，透传给 judge）
 
         query_embeddings = []
         if self._config.embedding_model and hyde_positive:
@@ -310,6 +315,7 @@ class TrajectoryPipeline:
             slices=slices,
             target_capability=target_capability,
             trajectory_signal=trajectory_signal,
+            rubric=rubric,
         )
 
         for hit, jr in zip(kept_hits, judge_results):
@@ -331,6 +337,7 @@ class TrajectoryPipeline:
         hyde_positive = sub_problem.get("hyde_positive", [])
         target_capability = sub_problem.get("target_capability", [])
         trajectory_signal = sub_problem.get("trajectory_signal", "")
+        rubric = sub_problem.get("rubric")  # dict | None（判据卡，透传给 judge）
         sp_id = sub_problem.get("id", "unknown")
 
         query_embeddings = []
@@ -366,13 +373,15 @@ class TrajectoryPipeline:
         if miss_slices:
             miss_results = await self._judge.judge_batch(
                 slices=miss_slices, target_capability=target_capability,
-                trajectory_signal=trajectory_signal)
+                trajectory_signal=trajectory_signal, rubric=rubric)
             for j, i in enumerate(miss_idx):
                 jr = miss_results[j]
                 verdicts[i] = jr
                 judge_cache.put(sp_id, kept_hits[i].signature.trajectory_id,
                                 kept_hits[i].signature.slice_index,
-                                {"match": jr.match, "confidence": jr.confidence, "spans": jr.spans})
+                                {"match": jr.match, "confidence": jr.confidence,
+                                 "spans": jr.spans, "evidence_step": jr.evidence_step,
+                                 "criteria_hit": jr.criteria_hit})
 
         # update_labels 只对 miss 的 match 项（cached 命中首次已写过，幂等，跳过省一次写）
         for j, i in enumerate(miss_idx):

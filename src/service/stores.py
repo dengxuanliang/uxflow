@@ -66,10 +66,28 @@ CREATE TABLE IF NOT EXISTS judge_cache (
     matched INTEGER NOT NULL,
     confidence REAL NOT NULL,
     spans_json TEXT NOT NULL,
+    evidence_step INTEGER,
+    criteria_hit_json TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (sub_problem_id, trajectory_id, slice_index)
 );
 """
+
+# 旧库迁移（关键）：CREATE TABLE IF NOT EXISTS 对**已存在**的旧库不加列，故对可回溯字段
+# 显式跑幂等 ALTER TABLE。重复运行时 "duplicate column name" 由 OperationalError 吞掉。
+_JUDGE_MIGRATIONS = (
+    "ALTER TABLE judge_cache ADD COLUMN evidence_step INTEGER",
+    "ALTER TABLE judge_cache ADD COLUMN criteria_hit_json TEXT",
+)
+
+
+def _migrate_judge_cache(conn: sqlite3.Connection) -> None:
+    """幂等补列：旧库（仅 matched/confidence/spans_json 三列）升级出可回溯两列。"""
+    for stmt in _JUDGE_MIGRATIONS:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # duplicate column name → 已存在，幂等跳过
 
 
 def _connect(db_path: str | pathlib.Path, schema: str) -> sqlite3.Connection:
@@ -251,21 +269,27 @@ class SqliteJudgeCache:
 
     def __init__(self, db_path: str | pathlib.Path):
         self._conn = _connect(db_path, _JUDGE_SCHEMA)
+        # 旧库升级：CREATE TABLE IF NOT EXISTS 不给已存在的旧库加列，此处幂等 ALTER 补列。
+        _migrate_judge_cache(self._conn)
 
     def get(
         self, sub_problem_id: str, trajectory_id: str, slice_index: int
     ) -> dict | None:
         row = self._conn.execute(
-            """SELECT matched, confidence, spans_json FROM judge_cache
+            """SELECT matched, confidence, spans_json, evidence_step, criteria_hit_json
+               FROM judge_cache
                WHERE sub_problem_id=? AND trajectory_id=? AND slice_index=?""",
             (sub_problem_id, trajectory_id, slice_index),
         ).fetchone()
         if row is None:
             return None
+        criteria_raw = row["criteria_hit_json"]
         return {
             "match": bool(row["matched"]),
             "confidence": row["confidence"],
             "spans": json.loads(row["spans_json"]),
+            "evidence_step": row["evidence_step"],
+            "criteria_hit": json.loads(criteria_raw) if criteria_raw else [],
         }
 
     def put(
@@ -277,8 +301,9 @@ class SqliteJudgeCache:
     ) -> None:
         self._conn.execute(
             """INSERT OR REPLACE INTO judge_cache
-               (sub_problem_id, trajectory_id, slice_index, matched, confidence, spans_json)
-               VALUES (?,?,?,?,?,?)""",
+               (sub_problem_id, trajectory_id, slice_index, matched, confidence,
+                spans_json, evidence_step, criteria_hit_json)
+               VALUES (?,?,?,?,?,?,?,?)""",
             (
                 sub_problem_id,
                 trajectory_id,
@@ -286,6 +311,8 @@ class SqliteJudgeCache:
                 int(verdict["match"]),
                 verdict["confidence"],
                 json.dumps(verdict["spans"], ensure_ascii=False),
+                verdict.get("evidence_step"),
+                json.dumps(verdict.get("criteria_hit") or [], ensure_ascii=False),
             ),
         )
 
