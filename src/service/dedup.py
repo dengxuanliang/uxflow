@@ -65,7 +65,8 @@ class ProblemCompiler:
         if key in self._lru:
             self._lru.move_to_end(key)
             return self._lru[key], None
-        spec_obj = await self._compiler.compile(question)
+        # search（读预览）路径无失败轨迹源 → 显式 failure_evidence=None，走纯文字打标。
+        spec_obj = await self._compiler.compile(question, failure_evidence=None)
         spec = self._serialize_fn(spec_obj, question)
         self._lru[key] = spec
         self._lru.move_to_end(key)

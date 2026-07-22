@@ -32,6 +32,8 @@ from module0.schema import (
     SubProblem,
     DroppedSubProblem,
     StructuredFilters,
+    _parse_rubric,
+    _parse_failure_evidence,
 )
 from module0.taxonomy import Taxonomy
 from module0_5.models import LabelProposal
@@ -85,8 +87,13 @@ class QueryCompiler:
         """Retry/degrade stats for the last compile() run."""
         return self._robustness
 
-    async def compile(self, raw_input: str) -> ProblemSpec:
-        """Run the full compilation pipeline. At most 4 LLM calls."""
+    async def compile(self, raw_input: str, *, failure_evidence: str | None = None) -> ProblemSpec:
+        """Run the full compilation pipeline. At most 4 LLM calls.
+
+        failure_evidence: service 层压缩好的失败轨迹紧凑文本（或 None）。非 None 时
+        注入 Call 2（打标）供逐子问题认领证据步；默认 None 保证三个 smoke 脚本、无轨迹
+        清单不炸。**只作用于 Call 2**——Call 2'（澄清重评）永不接入（决策 3，防泄漏）。
+        """
         self.dropped_records = []
         self.hyde_embeddings = {}
         self.label_proposals = []
@@ -105,10 +112,13 @@ class QueryCompiler:
         except _StepFailed as e:
             raise CompileError("Call 1 failed after retries") from e
 
-        # ── Call 2: label + self-eval ──
+        # ── Call 2: label + self-eval (+ rubric / 失败轨迹证据认领) ──
         try:
             c2_results = await self._call_and_parse(
-                lambda: build_call2_messages(sub_problems_raw, self._taxonomy),
+                lambda: build_call2_messages(
+                    sub_problems_raw, self._taxonomy,
+                    failure_evidence=failure_evidence,
+                ),
                 parse_call2_response, step_name="call2",
             )
         except _StepFailed:
@@ -270,7 +280,29 @@ class QueryCompiler:
             structured_filters=self._build_filters(result.get("structured_filters")),
             confidence=result["confidence"],
             route="pass",
+            # 增强字段（判据卡 / 失败轨迹证据）降级策略：内部单独解析、失败只置 None，
+            # sub_problem 其余字段照常构建。**与决策 6 的 route=drop 不同源**：route=drop 是
+            # Call 2 判定"认领不到证据"的结果（走既有 route!=pass 的 _record_dropped 分流，
+            # 此处不涉及）；这里处理的是"LLM 产出的 rubric/evidence 结构非法"→ 增强失败，
+            # 不惩罚合格问题。勿套 _build_dropped 的外层 drop 模式。
+            rubric=self._parse_optional(_parse_rubric, result.get("rubric")),
+            failure_evidence=self._parse_optional(
+                _parse_failure_evidence, result.get("failure_evidence")),
         )
+
+    @staticmethod
+    def _parse_optional(parse_fn, d):
+        """Rebuild an optional nested dataclass; any structural defect → None.
+
+        _parse_rubric / _parse_failure_evidence raise KeyError on missing sub-keys
+        (half-formed dict) and TypeError/ValueError on wrong shapes. Swallow all of
+        these to None so a bad enhancement never crashes an otherwise-valid
+        sub_problem (PR-1 审查留的 🟡：半残 rubric 的 KeyError 也当结构非法处理)。
+        """
+        try:
+            return parse_fn(d)
+        except (KeyError, TypeError, ValueError):
+            return None
 
     def _build_dropped(self, result: dict, raw: dict, reason: str) -> DroppedSubProblem:
         # Dropped items may carry invalid enums (that's often why they were

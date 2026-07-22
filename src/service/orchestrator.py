@@ -43,6 +43,69 @@ def _parse_manifest_line(line: str) -> tuple[str, Any]:
     return line, None
 
 
+# ── 失败轨迹压缩（service 层；决策 2 架构护栏）────────────────────────────
+# module0 绝不 import module1；轨迹 load+slice+summarize 三件套在 service 层做，
+# 压成一段紧凑文本后经 compile(failure_evidence=...) 依赖注入喂给 compiler。
+# service 本就同时依赖 module0/1，import 方向合规（护栏是 module0 不依赖 module1）。
+#
+# 长度上限（避免撞 compiler max_tokens=4000 / 别让单条长轨迹吃满预算）：
+#   _MAX_EVIDENCE_SLICES：最多取前 N 个 slice（一次失败通常集中在前若干语义段）。
+#   _MAX_EVIDENCE_CHARS：紧凑文本硬字符上限，复用 summarizer 的"截断+省略号"思路兜底。
+# 选值理由见 PR 报告；summarizer 已逐步截断 assistant/args/result，此处是二次总量封顶。
+_MAX_EVIDENCE_SLICES = 3
+_MAX_EVIDENCE_CHARS = 4000
+
+
+def _compress_failure_trajectory(
+    failure_trajectory: Any,
+    load_trajectories_fn: Callable,
+) -> str | None:
+    """把失败轨迹压成紧凑文本供 Call 2 逐子问题认领证据步；无有效轨迹 → None。
+
+    铁律（决策 铁律1，物理隔离）：本函数**只**读失败轨迹并返回文本，供 compile 压缩，
+    **绝不**把读到的轨迹写进任何正例存储（problem_store / trajectory_store / module1
+    index）。失败轨迹是"错误现场"，一旦当正例召回选进 SFT 即灾难。调用方须保证本函数
+    的返回值只流向 deps.compiler.compile(failure_evidence=...)，不流向 ingest 写路径。
+
+    `failure_trajectory` 取自 manifest 结构化行（轨迹传路径引用，不内联）。仅当它是
+    非空字符串路径时才消费；null / 非字符串一律视为无轨迹返回 None（向后兼容）。
+    """
+    # 契约：轨迹传路径引用。非字符串（null/dict 等）→ 无轨迹。
+    if not isinstance(failure_trajectory, str) or not failure_trajectory:
+        return None
+
+    # 决策 2：slice/summarize 三件套在 module1；service 层 import 合规（lazy，
+    # 与本文件 module3 的 lazy import 同风格，避免顶层硬依赖）。
+    from module1.slicer import slice_trajectory
+    from module1.summarizer import summarize_slice
+
+    trajectories = load_trajectories_fn(failure_trajectory)
+    if not trajectories:
+        return None
+
+    blocks: list[str] = []
+    slices_used = 0
+    for traj in trajectories:
+        if slices_used >= _MAX_EVIDENCE_SLICES:
+            break
+        for sl in slice_trajectory(traj):
+            if slices_used >= _MAX_EVIDENCE_SLICES:
+                break
+            body = summarize_slice(sl)
+            if not body:
+                continue
+            blocks.append(f"[trajectory_id: {traj.id}]\n{body}")
+            slices_used += 1
+
+    if not blocks:
+        return None
+
+    text = "\n\n".join(blocks)
+    if len(text) > _MAX_EVIDENCE_CHARS:
+        text = text[:_MAX_EVIDENCE_CHARS] + "\n...(截断)"
+    return text
+
+
 @dataclass
 class PipelineDeps:
     """Injected collaborators. Production wiring builds real ones; tests fake."""
@@ -135,13 +198,18 @@ async def run_pipeline(
         if not line:
             continue
         done_n += 1
-        # PR-1: 结构化行取 question 作编译输入；failure_trajectory 解析出但暂不消费（PR-2 接入）。
-        # 纯文本行 question 即整行，行为逐字不变。
-        question, _failure_trajectory = _parse_manifest_line(line)
+        # PR-2: 结构化行取 question 编译；failure_trajectory 非 None 时压缩成
+        # failure_evidence 文本喂 Call 2（据现场认领证据步 / 定 label / 覆盖 summary）。
+        # 纯文本行 failure_trajectory 恒 None → failure_evidence=None，行为逐字不变。
+        question, failure_trajectory = _parse_manifest_line(line)
         emit({"stage": "module0", "status": "running",
               "msg": f"编译第 {done_n}/{total} 条: {question[:30]}",
               "index": done_n, "total": total})
-        spec_obj = await deps.compiler.compile(question)
+        # 物理隔离（决策 铁律1）：失败轨迹只用于压缩喂 compile，绝不进 module1 index /
+        # trajectory_store —— 本函数只返回文本，不落任何正例存储。
+        failure_evidence = _compress_failure_trajectory(
+            failure_trajectory, deps.load_trajectories_fn)
+        spec_obj = await deps.compiler.compile(question, failure_evidence=failure_evidence)
         specs.append(_spec_to_dict(spec_obj, id_prefix=f"L{i + 1}."))
 
     all_sub_problems = [sp for s in specs for sp in s["sub_problems"]]
@@ -295,9 +363,9 @@ async def run_ingest(
             if not line:
                 continue
             try:
-                # PR-1: 结构化行取 question；failure_trajectory 暂不消费（PR-2 接入）。
-                # 纯文本行 question 即整行，dedup/compile/入库口径逐字不变。
-                question, _failure_trajectory = _parse_manifest_line(line)
+                # PR-2: 结构化行取 question；failure_trajectory 非 None 时压缩喂 Call 2。
+                # 纯文本行 failure_trajectory 恒 None，dedup/compile/入库口径逐字不变。
+                question, failure_trajectory = _parse_manifest_line(line)
                 emb = deps.embedder.embed(question)
                 hit = deps.problem_store.nearest(emb)
                 if hit is not None and hit[1] >= tau_q:
@@ -305,7 +373,13 @@ async def run_ingest(
                     emit({"stage": "ingest_manifest", "status": "running",
                           "msg": f"跳过重复: {question[:30]}"})
                     continue
-                spec_obj = await deps.compiler.compile(question)
+                # 物理隔离（决策 铁律1）：失败轨迹**只**读来压缩喂 compile，绝不进
+                # trajectory_store / problem_store。下方 problem_store.add 写的是
+                # question + 正例 spec，与失败轨迹在两条互不共用的路径上。
+                failure_evidence = _compress_failure_trajectory(
+                    failure_trajectory, deps.load_trajectories_fn)
+                spec_obj = await deps.compiler.compile(
+                    question, failure_evidence=failure_evidence)
                 spec = _spec_to_dict(spec_obj, id_prefix=f"{problem_id_of(question)}.")
                 deps.problem_store.add(question, emb, spec)
                 added += 1

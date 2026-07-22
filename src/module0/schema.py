@@ -36,7 +36,7 @@ TOOLS_USED = frozenset([
 ])
 
 DROP_REASONS = frozenset([
-    "ambiguous", "not_applicable", "label_diverged", "other",
+    "ambiguous", "not_applicable", "label_diverged", "no_trajectory_evidence", "other",
 ])
 
 # 契约 §1.5 冻结枚举 — CapabilityRubric.capability_kind 的合法取值

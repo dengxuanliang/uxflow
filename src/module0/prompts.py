@@ -84,7 +84,9 @@ _CALL2_SYSTEM_WITH_TAXONOMY = """你是一个 SWE 问题分析专家。对每个
   "structured_filters": {{"languages": ["python"], ...}},
   "confidence": 0.0-1.0,
   "route": "pass" 或 "drop",
-  "drop_reason": "ambiguous|not_applicable|label_diverged|other（仅 route==drop 时填）",
+  "drop_reason": "ambiguous|not_applicable|label_diverged|no_trajectory_evidence|other（仅 route==drop 时填）",
+  "rubric": {{"positive_criteria": ["可观测正向判据1"], "negative_criteria": ["反例/失败模式1"], "decisive_evidence": "决定性证据的形态描述（哪类步骤、什么信号）", "capability_kind": "presence|avoidance|recovery"}},
+  "failure_evidence": {{"trajectory_id": "轨迹id", "evidence_steps": [3, 5], "observed_failure": "现场观测到的真实失败"}},
   "label_proposals": [{{"label": "new_label", "description": "一句话中文", "parent": "父建议或null", "keywords": ["kw1"], "taxonomy_extension": true}}]
 }}
 ```
@@ -112,6 +114,7 @@ _CALL2_SYSTEM_WITH_TAXONOMY = """你是一个 SWE 问题分析专家。对每个
    | `not_applicable` | 问题本质无轨迹硬信号可匹配，或不属于模型能力范畴。**再怎么澄清也没有可检索的执行痕迹。**包括：前端视觉/UI 美观、响应速度/延迟、环境与基础设施、纯主观体验 | "UI 样式不好看"、"回答速度太慢"、"部署环境有问题" |
    | `label_diverged` | 问题命中多个不相关能力、或涉及当前词表未覆盖的维度（如纯逻辑/算法正确性），问题本身不聚焦到单一能力 | "语法对但逻辑完全不对"、"代码又慢又乱还有 bug" |
    | `ambiguous` | 问题有多种**互斥的具体解释**，一旦澄清就能落到明确能力上。区别于 not_applicable：ambiguous 澄清后是有硬信号的 | "代码有问题"、"中途停止"（可能截断/主动收尾/报错放弃） |
+   | `no_trajectory_evidence` | **仅当本次输入为该子问题提供了失败轨迹（failure_evidence 段在场）、且你在轨迹里逐步认领后对该子问题找不到任何证据步**时使用，判定它是 Call 1 的 over-split，轨迹优先剔除之。**无失败轨迹（纯文本路径、下方无 failure_evidence 段）时严禁输出此值**——无轨迹不因此 drop。 | 轨迹在场，但没有任何一步演示该子问题描述的失败 |
    | `other` | 低分但不属于上述任何一类 | 兜底 |
 
    **关键区分**：
@@ -121,7 +124,10 @@ _CALL2_SYSTEM_WITH_TAXONOMY = """你是一个 SWE 问题分析专家。对每个
 ## 输出约束（严格遵守）
 - 每个子问题**必须**输出全部字段，`route` 字段绝对不可省略。
 - `route == "pass"` 时**不要**输出 drop_reason 字段。
-- `route == "drop"` 时**必须**输出 drop_reason，取值只能是上表四个之一。
+- `route == "drop"` 时**必须**输出 drop_reason，取值只能是上表五个之一。
+- **无失败轨迹（下方无"失败轨迹证据"段）时，绝不输出 `failure_evidence` 对象**——
+  该字段只能锚在真实轨迹上，无轨迹时凭空编造 trajectory_id 会污染审计（与
+  `no_trajectory_evidence` 的守卫对称）。
 
 只输出 JSON 数组，不要其他解释。"""
 
@@ -152,7 +158,9 @@ _CALL2_SYSTEM_EMPTY_TAXONOMY = """你是一个 SWE 问题分析专家。对每�
   "structured_filters": {{"languages": ["python"], ...}},
   "confidence": 0.0-1.0,
   "route": "pass" 或 "drop",
-  "drop_reason": "ambiguous|not_applicable|label_diverged|other（仅 route==drop 时填）",
+  "drop_reason": "ambiguous|not_applicable|label_diverged|no_trajectory_evidence|other（仅 route==drop 时填）",
+  "rubric": {{"positive_criteria": ["可观测正向判据1"], "negative_criteria": ["反例/失败模式1"], "decisive_evidence": "决定性证据的形态描述（哪类步骤、什么信号）", "capability_kind": "presence|avoidance|recovery"}},
+  "failure_evidence": {{"trajectory_id": "轨迹id", "evidence_steps": [3, 5], "observed_failure": "现场观测到的真实失败"}},
   "label_proposals": [{{"label": "new_label", "description": "一句话中文", "parent": "父建议或null", "keywords": ["kw1"], "taxonomy_extension": true}}]
 }}
 ```
@@ -180,6 +188,7 @@ _CALL2_SYSTEM_EMPTY_TAXONOMY = """你是一个 SWE 问题分析专家。对每�
    | `not_applicable` | 问题本质无轨迹硬信号可匹配，或不属于模型能力范畴。**再怎么澄清也没有可检索的执行痕迹。**包括：前端视觉/UI 美观、响应速度/延迟、环境与基础设施、纯主观体验 | "UI 样式不好看"、"回答速度太慢"、"部署环境有问题" |
    | `label_diverged` | 问题命中多个不相关能力、或涉及当前词表未覆盖的维度（如纯逻辑/算法正确性），问题本身不聚焦到单一能力 | "语法对但逻辑完全不对"、"代码又慢又乱还有 bug" |
    | `ambiguous` | 问题有多种**互斥的具体解释**，一旦澄清就能落到明确能力上。区别于 not_applicable：ambiguous 澄清后是有硬信号的 | "代码有问题"、"中途停止"（可能截断/主动收尾/报错放弃） |
+   | `no_trajectory_evidence` | **仅当本次输入为该子问题提供了失败轨迹（failure_evidence 段在场）、且你在轨迹里逐步认领后对该子问题找不到任何证据步**时使用，判定它是 Call 1 的 over-split，轨迹优先剔除之。**无失败轨迹（纯文本路径、下方无 failure_evidence 段）时严禁输出此值**——无轨迹不因此 drop。 | 轨迹在场，但没有任何一步演示该子问题描述的失败 |
    | `other` | 低分但不属于上述任何一类 | 兜底 |
 
    **关键区分**：
@@ -189,12 +198,63 @@ _CALL2_SYSTEM_EMPTY_TAXONOMY = """你是一个 SWE 问题分析专家。对每�
 ## 输出约束（严格遵守）
 - 每个子问题**必须**输出全部字段，`route` 字段绝对不可省略。
 - `route == "pass"` 时**不要**输出 drop_reason 字段。
-- `route == "drop"` 时**必须**输出 drop_reason，取值只能是上表四个之一。
+- `route == "drop"` 时**必须**输出 drop_reason，取值只能是上表五个之一。
+- **无失败轨迹（下方无"失败轨迹证据"段）时，绝不输出 `failure_evidence` 对象**——
+  该字段只能锚在真实轨迹上，无轨迹时凭空编造 trajectory_id 会污染审计（与
+  `no_trajectory_evidence` 的守卫对称）。
 
 只输出 JSON 数组，不要其他解释。"""
 
 
-def build_call2_messages(sub_problems: list[dict], taxonomy: Taxonomy) -> list[dict]:
+# ── Call 2 追加段：rubric 产出（对每份 system prompt 统一追加，DRY）──
+# 语义质量留 pilot，此段只固化"从哪蒸 / 禁什么 / 三型定义"的结构约束。
+_CALL2_RUBRIC_SECTION = """
+
+## 判据卡 rubric（对每个 route==pass 的子问题产出，可选增强字段）
+为每个 route==pass 的子问题在输出里补 `rubric` 对象（route==drop 的不产）。硬约束：
+
+- **必须从 raw_text / failure_summary 蒸**，**禁止**从 target_capability 标签名凭空发挥——
+  标签是抽象名，原始描述才是非 LLM 生成的锚。
+- `positive_criteria`：1-3 条可观测的"正向展示"判据。
+- `negative_criteria`：1-3 条反例/失败模式。
+- `decisive_evidence`：描述决定性证据的**形态**（在哪类步骤、什么信号），**禁止**写成
+  "检测 X 工具连续调用 N 次"这类能力特定检测器规则。
+- `capability_kind`：三选一，据能力性质定：
+  - `presence`（有痕）：正例=正向文本/结构标记的出现，如 writes_test_first。找正向痕迹本身。
+  - `avoidance`（无痕）：正例=坏模式的缺席，如 avoid_redundant_repetition。找"本可犯错的
+    锚点 + 其后没犯错的枢轴步"。
+  - `recovery`（转折）：error → 正确处置，如 recover_from_test_failure。找处置步。"""
+
+
+# ── Call 2 追加段：失败轨迹证据认领（仅 failure_evidence 在场时追加）──
+# {failure_evidence} 注入 service 压缩好的紧凑轨迹文本。语义留 pilot。
+_CALL2_EVIDENCE_SECTION = """
+
+## 失败轨迹证据（在场：逐子问题据现场认领）
+以下是与本次输入对应的**失败轨迹**压缩文本（真实错误现场）。轨迹挂在整条输入上、
+一条轨迹可能对应多个子问题，故须**逐子问题**认领，不假设一轨一能力：
+
+--- 失败轨迹开始 ---
+{failure_evidence}
+--- 失败轨迹结束 ---
+
+对**每个**子问题，去轨迹里认领"哪几步演示了**这条**子问题描述的失败"：
+
+- **认领到证据步** → 在该子问题输出里补 `failure_evidence` 对象
+  （`trajectory_id` / `evidence_steps`=命中的步号 / `observed_failure`=现场真实观测到的失败）；
+  据现场定 `target_capability`、用现场覆盖 `failure_summary`（**轨迹优先于用户文字**）；
+  **同一份现场同时供 rubric 的 `negative_criteria` / `decisive_evidence`**（照抄现场，不想象反例）。
+  时序：**先据现场覆盖 failure_summary，再从被校正后的 failure_summary 蒸 rubric**。
+- **认领不到任何证据步** → 该子问题 `route: "drop"`、`drop_reason: "no_trajectory_evidence"`
+  （判定为 Call 1 的 over-split，轨迹优先剔除）。**逐条判**：只 drop 零证据那条，不牵连同批别的。
+- **无证据段时**（本段不出现）：**绝不**输出 `failure_evidence`、**绝不**用
+  `no_trajectory_evidence`，走纯文字判定。"""
+
+
+def build_call2_messages(
+    sub_problems: list[dict], taxonomy: Taxonomy,
+    failure_evidence: str | None = None,
+) -> list[dict]:
     from module0.schema import LANGUAGES, TOOLS_USED
 
     format_kwargs = {
@@ -209,6 +269,12 @@ def build_call2_messages(sub_problems: list[dict], taxonomy: Taxonomy) -> list[d
             taxonomy_injection=taxonomy.to_prompt_text(),
             **format_kwargs,
         )
+
+    # rubric 段恒追加（对 route==pass 产 rubric）。
+    system += _CALL2_RUBRIC_SECTION
+    # 证据段仅在 service 传入压缩轨迹文本时追加；None 时走纯文字格式，逐字不变。
+    if failure_evidence is not None:
+        system += _CALL2_EVIDENCE_SECTION.format(failure_evidence=failure_evidence)
 
     user_content = "请对以下子问题逐一分析：\n\n"
     for sp in sub_problems:
@@ -279,7 +345,10 @@ def build_call2_prime_messages(clarified_sub_problems: list[dict], taxonomy: Tax
     Builds fresh message dicts (never mutates the base messages in place) so the
     caller can safely reuse or cache build_call2_messages output.
     """
-    base_msgs = build_call2_messages(clarified_sub_problems, taxonomy)
+    # 决策 3（防泄漏）：Call 2' 处理的是被澄清拆分后的子问题，与原始轨迹的证据步
+    # 对应关系已错位，认领无意义。故复用 build_call2_messages 时**显式传
+    # failure_evidence=None**，确保澄清重评路径永不带失败轨迹证据。
+    base_msgs = build_call2_messages(clarified_sub_problems, taxonomy, failure_evidence=None)
     return [
         {"role": base_msgs[0]["role"], "content": base_msgs[0]["content"] + _CALL2_PRIME_EXTRA},
         *base_msgs[1:],

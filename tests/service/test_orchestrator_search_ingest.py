@@ -74,7 +74,7 @@ class FakeCompiler:
         self._n = 0
         self._raise_on = raise_on or set()
 
-    async def compile(self, raw_input):
+    async def compile(self, raw_input, *, failure_evidence=None):
         self._n += 1
         if raw_input in self._raise_on:
             raise ValueError(f"boom::{raw_input}")
@@ -359,3 +359,57 @@ def test_pipeline_deps_backward_compatible():
     assert deps.trajectory_store is None
     assert deps.judge_cache is None
     assert deps.embedder is None
+
+
+# ── 10. PR-2: run_ingest 结构化行压缩失败轨迹并传 failure_evidence ──────
+class CapturingCompiler(FakeCompiler):
+    def __init__(self):
+        super().__init__()
+        self.evidence_seen = []
+
+    async def compile(self, raw_input, *, failure_evidence=None):
+        self.evidence_seen.append(failure_evidence)
+        return await super().compile(raw_input, failure_evidence=failure_evidence)
+
+
+def _ingest_loader(path):
+    steps = [FakeStep(0, "user", "修 bug"),
+             FakeStep(1, "assistant", "改这里", tool_call_name="Edit",
+                      tool_call_args="foo.py")]
+    return [FakeTrajectory("traj_evi", steps)]
+
+
+async def test_run_ingest_structured_line_passes_evidence(tmp_path):
+    store = FakeProblemStore(nearest_result=None)
+    tstore = FakeTrajectoryStore()
+    compiler = CapturingCompiler()
+    deps = PipelineDeps(
+        compiler=compiler, pipeline=FakePipeline(), select_fn=fake_select,
+        load_trajectories_fn=_ingest_loader, problem_store=store,
+        trajectory_store=tstore, embedder=FakeEmbedder(),
+    )
+    view, _ = await run_ingest(
+        manifest_lines=['{"question": "重复读文件", "failure_trajectory": "traj/p.json"}'],
+        deps=deps, emit=lambda e: None)
+    assert view["summary"]["added"] == 1
+    assert len(compiler.evidence_seen) == 1
+    assert compiler.evidence_seen[0] is not None
+    assert "traj_evi" in compiler.evidence_seen[0]
+    # 物理隔离（决策 铁律1，显式断言）：失败轨迹只被压缩喂 compile，
+    # 绝不进任何正例存储 —— problem_store 只 add question+spec，
+    # trajectory_store 在无 --trajectory 输入时一次 upsert 都没有。
+    assert len(store.add_calls) == 1
+    assert store.add_calls[0][0] == "重复读文件"
+    assert tstore.upsert_calls == []  # 失败轨迹绝不落 trajectory_store
+
+
+async def test_run_ingest_plain_text_line_passes_none_evidence(tmp_path):
+    store = FakeProblemStore(nearest_result=None)
+    compiler = CapturingCompiler()
+    deps = PipelineDeps(
+        compiler=compiler, pipeline=FakePipeline(), select_fn=fake_select,
+        load_trajectories_fn=_ingest_loader, problem_store=store,
+        embedder=FakeEmbedder(),
+    )
+    await run_ingest(manifest_lines=["纯文本问题"], deps=deps, emit=lambda e: None)
+    assert compiler.evidence_seen == [None]

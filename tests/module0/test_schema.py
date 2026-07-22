@@ -21,7 +21,22 @@ def test_structured_filters_enums():
     assert "other" in TOOLS_USED
     assert len(TOOLS_USED) == 12
     assert "ambiguous" in DROP_REASONS
-    assert len(DROP_REASONS) == 4
+    assert "no_trajectory_evidence" in DROP_REASONS
+    assert len(DROP_REASONS) == 5
+
+
+def test_dropped_sub_problem_no_trajectory_evidence_reason():
+    # PR-2: 失败轨迹认领不到证据步 → drop_reason=no_trajectory_evidence 构造合法
+    d = DroppedSubProblem(
+        id="p9", origin="original", parent_id=None,
+        raw_text="t", failure_summary="s",
+        target_capability=["x"], trajectory_signal="s",
+        hyde_positive=["h1", "h2"], keywords=["k"],
+        structured_filters=StructuredFilters(),
+        confidence=0.4, route="drop",
+        drop_reason="no_trajectory_evidence",
+    )
+    assert d.drop_reason == "no_trajectory_evidence"
 
 
 def test_sub_problem_valid():
