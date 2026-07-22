@@ -2,6 +2,7 @@
 from dataclasses import dataclass, field
 
 from service.orchestrator import run_pipeline, PipelineDeps
+from service.orchestrator import _spec_to_dict, _parse_manifest_line
 
 
 @dataclass
@@ -202,4 +203,139 @@ async def test_orchestrator_survives_when_emit_would_be_called(tmp_path):
         manifest_lines=["a", "b"], trajectory_path=traj,
         deps=_deps(), emit=lambda ev: events.append(ev))
     assert view is not None
+
+
+# ── PR-1: rubric / failure_evidence 序列化透传（_spec_to_dict）──
+
+
+def test_spec_to_dict_rubric_none_serializes_null():
+    from module0.schema import ProblemSpec, SubProblem, StructuredFilters
+    sp = SubProblem(
+        id="p1", origin="original", parent_id=None,
+        raw_text="t", failure_summary="s",
+        target_capability=["x"], trajectory_signal="sig",
+        hyde_positive=["h1", "h2"], keywords=["k"],
+        structured_filters=StructuredFilters(), confidence=0.9, route="pass",
+    )
+    spec = ProblemSpec(raw_input="ri", domain="agentic_swe", sub_problems=[sp])
+    d = _spec_to_dict(spec, id_prefix="L1.")
+    out = d["sub_problems"][0]
+    assert out["rubric"] is None
+    assert out["failure_evidence"] is None
+    assert out["id"] == "L1.p1"
+
+
+def test_spec_to_dict_rubric_present_serializes_nested_dict():
+    from module0.schema import (
+        ProblemSpec, SubProblem, StructuredFilters,
+        CapabilityRubric, LabelEvidence,
+    )
+    sp = SubProblem(
+        id="p1", origin="original", parent_id=None,
+        raw_text="t", failure_summary="s",
+        target_capability=["x"], trajectory_signal="sig",
+        hyde_positive=["h1", "h2"], keywords=["k"],
+        structured_filters=StructuredFilters(), confidence=0.9, route="pass",
+        rubric=CapabilityRubric(
+            positive_criteria=["p"], negative_criteria=["n"],
+            decisive_evidence="d", capability_kind="presence"),
+        failure_evidence=LabelEvidence(
+            trajectory_id="traj_1", evidence_steps=[2], observed_failure="obs"),
+    )
+    spec = ProblemSpec(raw_input="ri", domain="agentic_swe", sub_problems=[sp])
+    out = _spec_to_dict(spec, id_prefix="L1.")["sub_problems"][0]
+    assert out["rubric"] == {
+        "positive_criteria": ["p"], "negative_criteria": ["n"],
+        "decisive_evidence": "d", "capability_kind": "presence",
+    }
+    assert out["failure_evidence"] == {
+        "trajectory_id": "traj_1", "evidence_steps": [2], "observed_failure": "obs",
+    }
+
+
+def test_spec_to_dict_fake_without_optional_attrs_defaults_null():
+    # 老 spec 对象/测试 fake 无 rubric 属性 → getattr 兜底为 None
+    sp = FakeSubProblem(id="p1", failure_summary="s", target_capability=["x"])
+    sp.structured_filters = FakeFilters()
+    spec = FakeSpec(raw_input="ri", domain="agentic_swe", sub_problems=[sp])
+    out = _spec_to_dict(spec, id_prefix="L1.")["sub_problems"][0]
+    assert out["rubric"] is None
+    assert out["failure_evidence"] is None
+
+
+# ── PR-1: manifest JSONL 行解析（三种退化路径）──
+
+
+def test_parse_manifest_line_plain_text():
+    q, ft = _parse_manifest_line("代码总有语法错误")
+    assert q == "代码总有语法错误"
+    assert ft is None
+
+
+def test_parse_manifest_line_structured_object_with_question():
+    line = '{"question": "修复失败", "failure_trajectory": {"id": "t9"}}'
+    q, ft = _parse_manifest_line(line)
+    assert q == "修复失败"
+    assert ft == {"id": "t9"}
+
+
+def test_parse_manifest_line_structured_object_null_trajectory():
+    line = '{"question": "q only", "failure_trajectory": null}'
+    q, ft = _parse_manifest_line(line)
+    assert q == "q only"
+    assert ft is None
+
+
+def test_parse_manifest_line_brace_but_not_valid_json_falls_back():
+    line = "{this is not json but starts with brace}"
+    q, ft = _parse_manifest_line(line)
+    assert q == line
+    assert ft is None
+
+
+def test_parse_manifest_line_json_object_without_question_falls_back():
+    line = '{"foo": "bar"}'
+    q, ft = _parse_manifest_line(line)
+    assert q == line  # 整行当纯文本
+    assert ft is None
+
+
+def test_parse_manifest_line_json_array_falls_back():
+    line = '["a", "b"]'
+    q, ft = _parse_manifest_line(line)
+    assert q == line
+    assert ft is None
+
+
+def test_parse_manifest_line_non_string_question_falls_back():
+    # question 非字符串（int/null/空串）→ 视为无效结构化行，退回整行当纯文本，
+    # 防止非 str 注入 compile()/日志（run_pipeline 的编译循环不隔离单行异常）。
+    for line in ('{"question": 123}', '{"question": null}', '{"question": ""}'):
+        q, ft = _parse_manifest_line(line)
+        assert q == line, f"应退回整行: {line}"
+        assert ft is None
+
+
+async def test_run_pipeline_structured_manifest_line_compiles_question(tmp_path):
+    # 结构化行：编译输入应是 question，不是整行 JSON
+    traj = tmp_path / "t.jsonl"
+    traj.write_text('{"id":"t1","messages":[]}\n')
+    seen = []
+
+    class CapturingCompiler(FakeCompiler):
+        async def compile(self, raw_input):
+            seen.append(raw_input)
+            return await super().compile(raw_input)
+
+    deps = PipelineDeps(
+        compiler=CapturingCompiler(),
+        pipeline=FakePipeline(),
+        select_fn=fake_select,
+        load_trajectories_fn=lambda p: [],
+    )
+    await run_pipeline(
+        manifest_lines=['{"question": "结构化问题", "failure_trajectory": null}'],
+        trajectory_path=traj, deps=deps, emit=lambda ev: None)
+    assert seen == ["结构化问题"]
+
 

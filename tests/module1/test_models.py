@@ -26,6 +26,23 @@ def test_judge_result():
     assert jr.spans[0]["start_step"] == 2
 
 
+def test_judge_result_traceability_fields_default():
+    # PR-1: 新增可回溯字段带默认值，缺省行为与改动前一致
+    jr = JudgeResult(match=True, confidence=0.9, spans=[])
+    assert jr.evidence_step is None
+    assert jr.criteria_hit == []
+    # 独立实例互不共享同一 list
+    jr.criteria_hit.append("writes_test_first")
+    assert JudgeResult(match=False, confidence=0.0, spans=[]).criteria_hit == []
+
+
+def test_judge_result_traceability_fields_set():
+    jr = JudgeResult(match=True, confidence=0.9, spans=[],
+                     evidence_step=7, criteria_hit=["c1", "c2"])
+    assert jr.evidence_step == 7
+    assert jr.criteria_hit == ["c1", "c2"]
+
+
 def test_sft_candidate():
     c = SFTCandidate(
         trajectory_id="traj_001",

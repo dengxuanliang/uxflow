@@ -24,3 +24,5 @@ class ScoredCandidate:
     judge_match: bool = False
     embedding: list[float] = field(default_factory=list)
     bm25_tokens: list[str] = field(default_factory=list)
+    evidence_step: int | None = None                        # 决定性证据在第几步（PR-3 起有值）
+    criteria_hit: list[str] = field(default_factory=list)   # 命中 rubric 判据（PR-3 起有值）

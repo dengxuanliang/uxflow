@@ -8,13 +8,39 @@ Emits progress events keyed by pipeline stage.
 
 from __future__ import annotations
 
+import json
 import pathlib
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Callable
 
 from service.viewmodel import build_inspector_view, build_trajectory_index
 
 __all__ = ["PipelineDeps", "run_pipeline", "run_search", "run_ingest"]
+
+
+def _parse_manifest_line(line: str) -> tuple[str, Any]:
+    """Parse one manifest line into (question, failure_trajectory).
+
+    Upgrade path (PR-1): a line that is a JSON object carrying a "question" key
+    whose value is a non-empty string is read structurally — question drives
+    compile, failure_trajectory (may be null) is parsed out but NOT consumed
+    here (PR-2 wires it into compile()). Anything else — non-JSON, JSON that is
+    not a dict-with-"question", or a "question" that is not a usable string —
+    falls back to treating the WHOLE raw line as the question (legacy plain-text
+    behavior, byte-for-byte unchanged). The string guard keeps a malformed
+    structured line (e.g. {"question": 123}) from injecting a non-str into
+    compile()/logging, which run_pipeline's compile loop would not isolate.
+
+    `line` is expected already-stripped by callers.
+    """
+    if line[:1] in ("{", "["):
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            return line, None
+        if isinstance(obj, dict) and isinstance(obj.get("question"), str) and obj["question"]:
+            return obj["question"], obj.get("failure_trajectory")
+    return line, None
 
 
 @dataclass
@@ -28,6 +54,18 @@ class PipelineDeps:
     trajectory_store: Any = None  # persist trajectory steps (ingest)
     judge_cache: Any = None       # pairwise judge verdict cache (search)
     embedder: Any = None          # embed(text) -> list[float] for dedup
+
+
+def _dc_to_dict(obj: Any) -> dict | None:
+    """Serialize an optional dataclass field (rubric / failure_evidence) to a
+    plain dict, or None when absent. asdict() handles the nested structure;
+    a plain dict passes through unchanged (defensive, in case already serialized).
+    """
+    if obj is None:
+        return None
+    if isinstance(obj, dict):
+        return obj
+    return asdict(obj)
 
 
 def _spec_to_dict(spec: Any, *, id_prefix: str) -> dict:
@@ -56,6 +94,10 @@ def _spec_to_dict(spec: Any, *, id_prefix: str) -> dict:
                 },
                 "confidence": sp.confidence,
                 "route": sp.route,
+                # 可选增强字段（契约 §1.5/§1.6）：None → null；非 None → 嵌套 dict。
+                # getattr 默认 None 保证旧 spec 对象/测试 fake 无此属性时不炸。
+                "rubric": _dc_to_dict(getattr(sp, "rubric", None)),
+                "failure_evidence": _dc_to_dict(getattr(sp, "failure_evidence", None)),
             }
             for sp in spec.sub_problems
         ],
@@ -93,10 +135,13 @@ async def run_pipeline(
         if not line:
             continue
         done_n += 1
+        # PR-1: 结构化行取 question 作编译输入；failure_trajectory 解析出但暂不消费（PR-2 接入）。
+        # 纯文本行 question 即整行，行为逐字不变。
+        question, _failure_trajectory = _parse_manifest_line(line)
         emit({"stage": "module0", "status": "running",
-              "msg": f"编译第 {done_n}/{total} 条: {line[:30]}",
+              "msg": f"编译第 {done_n}/{total} 条: {question[:30]}",
               "index": done_n, "total": total})
-        spec_obj = await deps.compiler.compile(line)
+        spec_obj = await deps.compiler.compile(question)
         specs.append(_spec_to_dict(spec_obj, id_prefix=f"L{i + 1}."))
 
     all_sub_problems = [sp for s in specs for sp in s["sub_problems"]]
@@ -250,19 +295,22 @@ async def run_ingest(
             if not line:
                 continue
             try:
-                emb = deps.embedder.embed(line)
+                # PR-1: 结构化行取 question；failure_trajectory 暂不消费（PR-2 接入）。
+                # 纯文本行 question 即整行，dedup/compile/入库口径逐字不变。
+                question, _failure_trajectory = _parse_manifest_line(line)
+                emb = deps.embedder.embed(question)
                 hit = deps.problem_store.nearest(emb)
                 if hit is not None and hit[1] >= tau_q:
                     skipped += 1
                     emit({"stage": "ingest_manifest", "status": "running",
-                          "msg": f"跳过重复: {line[:30]}"})
+                          "msg": f"跳过重复: {question[:30]}"})
                     continue
-                spec_obj = await deps.compiler.compile(line)
-                spec = _spec_to_dict(spec_obj, id_prefix=f"{problem_id_of(line)}.")
-                deps.problem_store.add(line, emb, spec)
+                spec_obj = await deps.compiler.compile(question)
+                spec = _spec_to_dict(spec_obj, id_prefix=f"{problem_id_of(question)}.")
+                deps.problem_store.add(question, emb, spec)
                 added += 1
                 emit({"stage": "ingest_manifest", "status": "running",
-                      "msg": f"入库: {line[:30]}"})
+                      "msg": f"入库: {question[:30]}"})
             except Exception as exc:  # noqa: BLE001 — D4 逐行隔离，单行失败不中断
                 failed += 1
                 emit({"stage": "ingest_manifest", "status": "running",
