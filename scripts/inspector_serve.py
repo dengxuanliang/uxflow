@@ -35,7 +35,11 @@ from uxflow_paths import resolve_db_path, ensure_parent  # noqa: E402
 
 def build_app():
     root = pathlib.Path(__file__).parent.parent
-    model = os.environ.get("MODULE0_TEST_MODEL", "gpt-4o-mini")
+    # Model split: strong model compiles problem specs (high-leverage, low-volume);
+    # a separate model judges slices (highest-volume LLM call). Two distinct env
+    # keys so compile and judge can use different providers/families.
+    compile_model = os.environ.get("UXFLOW_COMPILE_MODEL", "claude-opus-4-8")
+    judge_model = os.environ.get("UXFLOW_JUDGE_MODEL", "gpt-4o-mini")
     emb = EmbeddingModel()
     taxonomy = Taxonomy.load(root / "fixtures" / "taxonomy_v0.json")
 
@@ -54,9 +58,9 @@ def build_app():
     gateway = LLMGateway(gw_config)  # long-lived; entered on startup
 
     compiler = QueryCompiler(
-        gateway=gateway, taxonomy=taxonomy, model=model, embedding_model=emb)
+        gateway=gateway, taxonomy=taxonomy, model=compile_model, embedding_model=emb)
     cfg = PipelineConfig(
-        judge_model=model, recall_top_n=20, min_confidence=0.7, embedding_model=emb)
+        judge_model=judge_model, recall_top_n=20, min_confidence=0.7, embedding_model=emb)
     # store_factory returns the SAME persistent slice_store singleton on every
     # call (not a fresh MemoryIndex): search recalls against the already-ingested,
     # persisted slice index — a per-call `new` would throw that index away.
