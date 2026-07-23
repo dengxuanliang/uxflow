@@ -250,7 +250,7 @@ async def main():
             for c in targeted:
                 print(
                     f"  {c.trajectory_id}/slice{c.slice_index}: "
-                    f"sub={c.sub_problem_id}, relevance={c.relevance_score:.4f}, "
+                    f"subs={c.sub_problem_ids}, relevance={c.relevance_score:.4f}, "
                     f"spans={c.loss_mask_spans}"
                 )
         else:
