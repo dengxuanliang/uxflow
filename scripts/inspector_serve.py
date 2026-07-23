@@ -35,10 +35,15 @@ from uxflow_paths import resolve_db_path, ensure_parent  # noqa: E402
 
 def build_app():
     root = pathlib.Path(__file__).parent.parent
-    # Model split: strong model compiles problem specs (high-leverage, low-volume);
-    # a separate model judges slices (highest-volume LLM call). Two distinct env
-    # keys so compile and judge can use different providers/families.
-    compile_model = os.environ.get("UXFLOW_COMPILE_MODEL", "claude-opus-4-8")
+    # Model split: a strong instruction-following model compiles problem specs
+    # (high-leverage, low-volume); a separate model judges slices (highest-volume
+    # LLM call). Two distinct env keys so compile and judge can use different
+    # providers/families.
+    # Compile default is gpt-5.5, NOT claude-opus-4-8: Call 1/2 demand strict JSON
+    # output, and opus frequently returns empty or drops into an assistant/"memory"
+    # mode on agent-behavior-flavored inputs (measured 0/3 vs gpt-5.5 3/3), which
+    # surfaces as "Call 1 failed after retries". Override via UXFLOW_COMPILE_MODEL.
+    compile_model = os.environ.get("UXFLOW_COMPILE_MODEL", "gpt-5.5")
     judge_model = os.environ.get("UXFLOW_JUDGE_MODEL", "gpt-4o-mini")
     emb = EmbeddingModel()
     taxonomy = Taxonomy.load(root / "fixtures" / "taxonomy_v0.json")

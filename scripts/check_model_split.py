@@ -31,7 +31,7 @@ from llm_gateway import GatewayConfig, LLMGateway  # noqa: E402
 
 # Same defaults as inspector_serve.build_app — keep these in sync so this
 # check exercises exactly what production wiring resolves.
-_COMPILE_DEFAULT = "claude-opus-4-8"
+_COMPILE_DEFAULT = "gpt-5.5"
 _JUDGE_DEFAULT = "gpt-4o-mini"
 
 _PING_MESSAGES = [
