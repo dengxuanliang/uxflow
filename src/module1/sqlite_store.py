@@ -98,7 +98,11 @@ class SqliteSliceStore:
 
     def __init__(self, db_path: str | pathlib.Path):
         # isolation_level=None → autocommit: each statement commits immediately (single-writer V1).
-        self._conn = sqlite3.connect(str(db_path), isolation_level=None)
+        # check_same_thread=False: under an ASGI server the pipeline runs in a
+        # worker thread distinct from the one that built this store at startup;
+        # WAL + autocommit keep single-writer semantics safe across threads.
+        self._conn = sqlite3.connect(
+            str(db_path), isolation_level=None, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=30000")
