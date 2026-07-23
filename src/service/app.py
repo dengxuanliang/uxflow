@@ -29,6 +29,7 @@ def create_app(
     ingest_fn: Callable | None = None,
     deps: Any = None,
     tau_q: float = 0.90,
+    db_manager: Any = None,
 ) -> FastAPI:
     """Build the app. Inject store/run_fn/deps for testing; defaults for prod."""
     store = store or MemoryRunStore()
@@ -50,6 +51,11 @@ def create_app(
     # per-run mutable state (self._store is reset each run_scored), so concurrent
     # runs would corrupt each other. A run waits its turn rather than interleave.
     _run_lock = asyncio.Semaphore(1)
+
+    # 库管理器与 run_lock 共享同一把锁（切换/清除前判占用）。接线方案B：
+    # manager 在 inspector_serve 构造，此处回注锁。
+    if db_manager is not None:
+        db_manager.attach_lock(_run_lock)
 
     async def _background_run(run_id: str, manifest_text: str, traj_path: pathlib.Path):
         def emit(ev: dict) -> None:
@@ -305,6 +311,39 @@ def create_app(
         if traj is None:
             raise HTTPException(status_code=404, detail="unknown trajectory")
         return JSONResponse(traj)
+
+    @app.get("/databases")
+    async def list_databases():
+        if db_manager is None:
+            raise HTTPException(status_code=501, detail="库管理未启用")
+        return {"current": str(db_manager.current()),
+                "databases": db_manager.list_databases()}
+
+    @app.post("/databases/switch")
+    async def switch_database(payload: dict):
+        if db_manager is None:
+            raise HTTPException(status_code=501, detail="库管理未启用")
+        path = (payload.get("path") or "").strip()
+        if not path:
+            raise HTTPException(status_code=400, detail="库路径不能为空")
+        if _run_lock.locked():
+            raise HTTPException(status_code=409, detail="有任务运行中，无法切换库")
+        p = pathlib.Path(path)
+        if not p.is_absolute():
+            p = db_manager.current().parent / p
+        db_manager.switch(p)
+        return {"current": str(db_manager.current()),
+                "databases": db_manager.list_databases()}
+
+    @app.post("/databases/clear")
+    async def clear_database():
+        if db_manager is None:
+            raise HTTPException(status_code=501, detail="库管理未启用")
+        if _run_lock.locked():
+            raise HTTPException(status_code=409, detail="有任务运行中，无法清除库")
+        db_manager.clear_current()
+        return {"current": str(db_manager.current()),
+                "databases": db_manager.list_databases()}
 
     # Static frontend (mounted last so API routes take precedence)
     if _WEB_DIR.exists():
