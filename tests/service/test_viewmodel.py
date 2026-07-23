@@ -109,6 +109,30 @@ def test_selected_keyed_on_slice_index_not_just_trajectory():
     assert hits[1]["selected"] is False  # 同 traj 同 sub_problem，仅 slice 不同 → 不串
 
 
+def test_selected_reflected_across_subproblem_cards():
+    from module3.merge import MergedCandidate
+    # 同一 (t1, slice0) 覆盖 p1、p2，进 targeted → 两个子问题卡片下都 selected
+    spec = {"raw_input": "x", "domain": "agentic_swe", "sub_problems": [
+        {"id": "p1", "failure_summary": "a", "target_capability": ["c1"], "confidence": 0.9},
+        {"id": "p2", "failure_summary": "b", "target_capability": ["c2"], "confidence": 0.9},
+    ]}
+    scored = [
+        FakeScored("t1", 0, "p1", ["c1"], 0.9, 0.9, [{"start_step": 0, "end_step": 1}]),
+        FakeScored("t1", 0, "p2", ["c2"], 0.7, 0.8, [{"start_step": 0, "end_step": 1}]),
+    ]
+    merged = MergedCandidate(
+        trajectory_id="t1", slice_index=0, trajectory_path="/x.jsonl",
+        sub_problem_ids=["p1", "p2"], relevance_by_problem={"p1": 0.9, "p2": 0.7},
+        relevance_score=0.9, loss_mask_spans=[{"start_step": 0, "end_step": 1}],
+        embedding=[1.0] + [0.0] * 1023, bm25_tokens=[])
+    view = build_inspector_view(
+        run_id="r", spec=spec, scored=scored,
+        select_result={"targeted": [merged], "manifest": {"targeted_count": 1}})
+    for p in view["problems"]:
+        hit = p["capabilities"][0]["hit_trajectories"][0]
+        assert hit["selected"] is True
+
+
 def test_manifest_passthrough():
     select_result = {
         "targeted": [],

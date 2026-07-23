@@ -35,9 +35,10 @@ def build_inspector_view(
     """
     colors = assign_colors(_all_labels(spec))
 
-    # (traj_id, slice_index, sub_problem_id) of module3-selected candidates
+    # (traj_id, slice_index) of module3-selected candidates（MergedCandidate 多归属，
+    # 无单一 sub_problem_id；同一 slice 在其覆盖的所有子问题卡片下都算已入选）
     selected_keys = {
-        (c.trajectory_id, c.slice_index, c.sub_problem_id)
+        (c.trajectory_id, c.slice_index)
         for c in select_result.get("targeted", [])
     }
 
@@ -73,7 +74,7 @@ def build_inspector_view(
                     "slice_index": c.slice_index,
                     "relevance_score": c.relevance_score,
                     "judge_confidence": c.judge_confidence,
-                    "selected": (c.trajectory_id, c.slice_index, sp_id) in selected_keys,
+                    "selected": (c.trajectory_id, c.slice_index) in selected_keys,
                     "loss_mask_spans": spans,
                     # 可回溯字段：judge 定位的决定性步 + 命中的 rubric 判据，供人审跳到证据。
                     # 老 ScoredCandidate（无此二字段）用 getattr 降级，向后兼容。
