@@ -246,6 +246,66 @@ function showDedupBanner(dedup) {
 }
 function hideDedupBanner() { $("dedup-banner").classList.add("hidden"); }
 
+// ── 库管理（spec §7）───────────────────────────────────
+async function loadDatabases() {
+  try {
+    const resp = await fetch("/databases");
+    if (!resp.ok) { $("db-bar").classList.add("hidden"); return; }
+    const { databases } = await resp.json();
+    const sel = $("db-select");
+    sel.innerHTML = "";
+    for (const d of databases) {
+      const opt = document.createElement("option");
+      opt.value = d.path;
+      const cnt = d.problems == null ? "?" : d.problems;
+      opt.textContent = `${d.name} (${cnt}问题)` + (d.is_current ? " · 当前" : "");
+      if (d.is_current) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  } catch (_) { /* best-effort */ }
+}
+
+async function switchDatabase(path) {
+  if (!path) return;
+  let resp;
+  try {
+    resp = await fetch("/databases/switch", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+  } catch (err) {
+    alert("切换失败: " + (err.message || err));
+    loadDatabases();   // resync dropdown to actual backend state
+    return;
+  }
+  if (resp.status === 409) { alert("有任务运行中，无法切换库"); loadDatabases(); return; }
+  if (!resp.ok) { alert("切换失败: HTTP " + resp.status); loadDatabases(); return; }
+  afterDbChange();
+}
+
+async function clearDatabase() {
+  if (!confirm("将永久删除当前库文件，不可恢复，确认？")) return;
+  let resp;
+  try {
+    resp = await fetch("/databases/clear", { method: "POST" });
+  } catch (err) {
+    alert("清除失败: " + (err.message || err));
+    return;
+  }
+  if (resp.status === 409) { alert("有任务运行中，无法清除库"); return; }
+  if (!resp.ok) { alert("清除失败: HTTP " + resp.status); return; }
+  afterDbChange();
+}
+
+function afterDbChange() {
+  $("workspace").classList.add("hidden");
+  hideDedupBanner();
+  state.view = null;
+  state.trajCache = {};
+  loadStats();
+  loadDatabases();
+}
+
 function resetRunState() {
   state.view = null;
   state.activeProblem = null;
@@ -810,5 +870,14 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") closeCompileModal();
 });
 
-// initial stats-bar populate
+// 库控件事件绑定
+$("db-select").addEventListener("change", (e) => switchDatabase(e.target.value));
+$("db-switch").addEventListener("click", () => {
+  const p = $("db-new-path").value.trim();
+  if (p) switchDatabase(p);
+});
+$("db-clear").addEventListener("click", clearDatabase);
+
+// initial stats-bar + 库列表 populate
 loadStats();
+loadDatabases();

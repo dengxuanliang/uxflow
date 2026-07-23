@@ -404,3 +404,34 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   margin-right: 4px;
   font-size: 11px;
 }
+
+/* ── 库管理控件（spec §7）──────────────────────────── */
+.db-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  font-size: 12px;
+  color: #fff;
+}
+.db-bar .db-label { opacity: .8; }
+.db-select, .db-new-path {
+  font-size: 12px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  border: 1px solid var(--line-2);
+  background: rgba(255,255,255,.9);
+  color: var(--fg);
+}
+.db-new-path { width: 180px; }
+.db-btn {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--line-2);
+  background: rgba(255,255,255,.85);
+  color: var(--fg);
+  cursor: pointer;
+}
+.db-btn:hover { background: #fff; }
+.db-clear { color: var(--hot); border-color: var(--hot); }
