@@ -271,12 +271,6 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   font-size: 8px; line-height: 1.2; background: #e7f7ee; color: var(--ok);
   border: 1px solid #b7e6cd; padding: 1px 4px; border-radius: 8px; letter-spacing: 0;
 }
-/* 可回溯性(PR-3):命中项下的决定性证据步 + 命中 rubric 判据 */
-.hit .hit-evidence {
-  width: 100%; margin-top: 3px; font-size: 10px; line-height: 1.4;
-  color: var(--fg-dim); font-family: var(--mono);
-}
-
 /* trajectory detail steps */
 .step {
   padding: 7px 9px; margin: 5px 0; border-radius: 6px; white-space: pre-wrap;
@@ -365,4 +359,48 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
 .mf-hyde-n {
   display: inline-block; font-family: var(--mono); font-size: 9px; color: var(--neon);
   margin-right: 6px; font-weight: 600;
+}
+
+/* ── 证据折叠（行内 accordion，spec §6）───────────────── */
+.evidence-toggle {
+  margin-top: 4px;
+  font-size: 11px;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-2);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.evidence-toggle:hover { background: var(--bg-3); }
+.evidence-toggle[aria-expanded="true"] {
+  color: var(--neon);
+  border-color: var(--neon);
+}
+.evidence-panel {
+  margin-top: 6px;
+  padding: 8px 10px;
+  border-left: 2px solid var(--gold);
+  background: var(--bg-2);
+  border-radius: 4px;
+  font-size: 12px;
+}
+.evidence-panel .ev-row {
+  display: flex;
+  gap: 8px;
+  margin: 2px 0;
+  align-items: baseline;
+}
+.evidence-panel .ev-k {
+  flex: 0 0 64px;
+  color: var(--fg-faint);
+}
+.evidence-panel .ev-v { flex: 1; color: var(--fg); }
+.evidence-panel .ev-cap {
+  display: inline-block;
+  color: #fff;
+  border-radius: 3px;
+  padding: 0 6px;
+  margin-right: 4px;
+  font-size: 11px;
 }

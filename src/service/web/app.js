@@ -528,17 +528,28 @@ function renderHits() {
     hd.innerHTML =
       `<span><span class="hit-id">${escapeHtml(h.trajectory_id)}</span>` +
       `<span class="hit-seg"> · slice${h.slice_index} · ${h.caps.length}片段</span></span>${badge}`;
-    // 可回溯性(PR-3):judge 定位的决定性证据步 + 命中的 rubric 判据。
-    if (h.evidence_step != null || (h.criteria_hit && h.criteria_hit.length)) {
-      const ev = document.createElement("div");
-      ev.className = "hit-evidence";
-      const parts = [];
-      if (h.evidence_step != null) parts.push(`⭐ 决定性证据: step ${h.evidence_step}`);
-      if (h.criteria_hit && h.criteria_hit.length) {
-        parts.push(`命中判据: ${h.criteria_hit.map(escapeHtml).join(" / ")}`);
-      }
-      ev.innerHTML = parts.join(" · ");
-      hd.appendChild(ev);
+    // 证据折叠：默认收起，点"证据"按钮就地展开（spec §6）。
+    const hasEvidence = h.evidence_step != null
+      || (h.criteria_hit && h.criteria_hit.length);
+    if (hasEvidence) {
+      const btn = document.createElement("button");
+      btn.className = "evidence-toggle";
+      btn.type = "button";
+      btn.textContent = "证据";
+      btn.setAttribute("aria-expanded", "false");
+
+      const panel = document.createElement("div");
+      panel.className = "evidence-panel hidden";
+      panel.innerHTML = renderEvidencePanel(h);
+
+      btn.onclick = (e) => {
+        e.stopPropagation();   // 不触发 selectTrajectory
+        const open = panel.classList.toggle("hidden") === false;
+        btn.setAttribute("aria-expanded", String(open));
+      };
+
+      hd.appendChild(btn);
+      hd.appendChild(panel);
     }
     hd.onclick = () => selectTrajectory(h);
     el.appendChild(hd);
@@ -708,6 +719,29 @@ function jumpToNextHighlight() {
   const target = document.querySelector(
     `#detail .step[data-step-index="${span.start}"]`);
   if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// 证据面板内容：决定性证据步 + 命中判据。多归属（一个 slice 命中多个能力/
+// 子问题）时按能力分组列出能力名，证据步/判据来自该 hit（按 sub_problem 聚合）。
+function renderEvidencePanel(h) {
+  const rows = [];
+  if (h.evidence_step != null) {
+    rows.push(`<div class="ev-row"><span class="ev-k">决定性证据</span>` +
+      `<span class="ev-v">⭐ step ${h.evidence_step}</span></div>`);
+  }
+  if (h.criteria_hit && h.criteria_hit.length) {
+    rows.push(`<div class="ev-row"><span class="ev-k">命中判据</span>` +
+      `<span class="ev-v">${h.criteria_hit.map(escapeHtml).join(" / ")}</span></div>`);
+  }
+  // c.color 来自后端 assign_colors 的固定调色板（非用户输入），故直接插入 style 安全。
+  const caps = (h.caps || []).map((c) =>
+    `<span class="ev-cap" style="background:${c.color}">${escapeHtml(c.label)}</span>`
+  ).join("");
+  if (caps) {
+    rows.push(`<div class="ev-row"><span class="ev-k">覆盖能力</span>` +
+      `<span class="ev-v">${caps}</span></div>`);
+  }
+  return rows.join("");
 }
 
 // ── utils ─────────────────────────────────────────────────────────
