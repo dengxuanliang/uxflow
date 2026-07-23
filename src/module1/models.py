@@ -65,6 +65,8 @@ class JudgeResult:
     confidence: float
     spans: list[dict]
     reasoning: str = ""
+    evidence_step: int | None = None                        # 决定性证据在第几步
+    criteria_hit: list[str] = field(default_factory=list)   # 命中 rubric 哪几条 positive_criteria
 
 
 @dataclass

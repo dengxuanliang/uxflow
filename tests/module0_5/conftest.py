@@ -9,7 +9,7 @@ class FakeJudge:
     def __init__(self, matches):
         self._matches = matches
 
-    async def judge_batch(self, *, slices, target_capability, trajectory_signal):
+    async def judge_batch(self, *, slices, target_capability, trajectory_signal, rubric=None):
         out = []
         for i in range(len(slices)):
             m = self._matches[i] if i < len(self._matches) else False

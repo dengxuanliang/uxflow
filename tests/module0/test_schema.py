@@ -3,10 +3,14 @@ from module0.schema import (
     SubProblem,
     StructuredFilters,
     DroppedSubProblem,
+    CapabilityRubric,
+    CAPABILITY_KINDS,
+    LabelEvidence,
     LANGUAGES,
     TOOLS_USED,
     DROP_REASONS,
     validate_problem_spec,
+    _parse_rubric,
 )
 
 
@@ -18,7 +22,22 @@ def test_structured_filters_enums():
     assert "other" in TOOLS_USED
     assert len(TOOLS_USED) == 12
     assert "ambiguous" in DROP_REASONS
-    assert len(DROP_REASONS) == 4
+    assert "no_trajectory_evidence" in DROP_REASONS
+    assert len(DROP_REASONS) == 5
+
+
+def test_dropped_sub_problem_no_trajectory_evidence_reason():
+    # PR-2: 失败轨迹认领不到证据步 → drop_reason=no_trajectory_evidence 构造合法
+    d = DroppedSubProblem(
+        id="p9", origin="original", parent_id=None,
+        raw_text="t", failure_summary="s",
+        target_capability=["x"], trajectory_signal="s",
+        hyde_positive=["h1", "h2"], keywords=["k"],
+        structured_filters=StructuredFilters(),
+        confidence=0.4, route="drop",
+        drop_reason="no_trajectory_evidence",
+    )
+    assert d.drop_reason == "no_trajectory_evidence"
 
 
 def test_sub_problem_valid():
@@ -103,3 +122,156 @@ def test_dropped_sub_problem():
     )
     assert d.route == "drop"
     assert d.drop_reason == "not_applicable"
+
+
+# ── PR-1: 判据卡 / 标签证据（可选增强字段，契约 §1.5/§1.6）──
+
+
+def test_capability_kinds_enum():
+    assert CAPABILITY_KINDS == {"presence", "avoidance", "recovery"}
+
+
+def test_capability_rubric_constructible_and_frozen():
+    r = CapabilityRubric(
+        positive_criteria=["writes a failing test first"],
+        negative_criteria=["jumps straight to impl"],
+        decisive_evidence="a test-authoring step preceding impl",
+        capability_kind="presence",
+    )
+    assert r.capability_kind == "presence"
+    assert r.positive_criteria == ["writes a failing test first"]
+    with pytest.raises(Exception):  # frozen dataclass → FrozenInstanceError
+        r.capability_kind = "recovery"
+
+
+def test_label_evidence_constructible_and_frozen():
+    e = LabelEvidence(
+        trajectory_id="traj_007",
+        evidence_steps=[3, 5],
+        observed_failure="generated code with a SyntaxError",
+    )
+    assert e.trajectory_id == "traj_007"
+    assert e.evidence_steps == [3, 5]
+    with pytest.raises(Exception):
+        e.observed_failure = "x"
+
+
+def test_sub_problem_optional_fields_default_none():
+    sp = SubProblem(
+        id="p1", origin="original", parent_id=None,
+        raw_text="t", failure_summary="s",
+        target_capability=["x"], trajectory_signal="s",
+        hyde_positive=["h1", "h2"], keywords=["k"],
+        structured_filters=StructuredFilters(),
+        confidence=0.9, route="pass",
+    )
+    assert sp.rubric is None
+    assert sp.failure_evidence is None
+
+
+def test_sub_problem_accepts_rubric_and_evidence():
+    r = CapabilityRubric(
+        positive_criteria=["p"], negative_criteria=["n"],
+        decisive_evidence="d", capability_kind="recovery",
+    )
+    e = LabelEvidence(trajectory_id="t1", evidence_steps=[1], observed_failure="f")
+    sp = SubProblem(
+        id="p1", origin="original", parent_id=None,
+        raw_text="t", failure_summary="s",
+        target_capability=["x"], trajectory_signal="s",
+        hyde_positive=["h1", "h2"], keywords=["k"],
+        structured_filters=StructuredFilters(),
+        confidence=0.9, route="pass",
+        rubric=r, failure_evidence=e,
+    )
+    assert sp.rubric is r
+    assert sp.failure_evidence is e
+
+
+def test_validate_problem_spec_rebuilds_nested_rubric_and_evidence():
+    data = {
+        "raw_input": "test", "domain": "agentic_swe",
+        "sub_problems": [{
+            "id": "p1", "origin": "original", "parent_id": None,
+            "raw_text": "t", "failure_summary": "s",
+            "target_capability": ["x"], "trajectory_signal": "sig",
+            "hyde_positive": ["h1", "h2"], "keywords": ["k"],
+            "structured_filters": {"languages": ["python"]},
+            "confidence": 0.9, "route": "pass",
+            "rubric": {
+                "positive_criteria": ["p"], "negative_criteria": ["n"],
+                "decisive_evidence": "d", "capability_kind": "avoidance",
+            },
+            "failure_evidence": {
+                "trajectory_id": "traj_1", "evidence_steps": [2, 4],
+                "observed_failure": "obs",
+            },
+        }],
+    }
+    ps = validate_problem_spec(data)
+    sp = ps.sub_problems[0]
+    assert isinstance(sp.rubric, CapabilityRubric)
+    assert sp.rubric.capability_kind == "avoidance"
+    assert isinstance(sp.failure_evidence, LabelEvidence)
+    assert sp.failure_evidence.evidence_steps == [2, 4]
+
+
+# ── PR-3 (F)：_parse_rubric 对非法 capability_kind 抛 ValueError（降级入口）──
+
+def test_parse_rubric_valid_kind():
+    r = _parse_rubric({
+        "positive_criteria": ["p"], "negative_criteria": ["n"],
+        "decisive_evidence": "d", "capability_kind": "recovery",
+    })
+    assert isinstance(r, CapabilityRubric)
+    assert r.capability_kind == "recovery"
+
+
+def test_parse_rubric_none_stays_none():
+    assert _parse_rubric(None) is None
+    assert _parse_rubric({}) is None
+
+
+def test_parse_rubric_invalid_kind_raises_value_error():
+    """capability_kind 不在 CAPABILITY_KINDS → ValueError（供 compiler _parse_optional 吞成 None）。"""
+    with pytest.raises(ValueError):
+        _parse_rubric({
+            "positive_criteria": ["p"], "negative_criteria": ["n"],
+            "decisive_evidence": "d", "capability_kind": "bogus_kind",
+        })
+
+
+def test_validate_problem_spec_missing_optional_fields_stay_none():
+    data = {
+        "raw_input": "test", "domain": "agentic_swe",
+        "sub_problems": [{
+            "id": "p1", "origin": "original", "parent_id": None,
+            "raw_text": "t", "failure_summary": "s",
+            "target_capability": ["x"], "trajectory_signal": "sig",
+            "hyde_positive": ["h1", "h2"], "keywords": ["k"],
+            "structured_filters": {},
+            "confidence": 0.9, "route": "pass",
+            # no rubric / failure_evidence keys at all
+        }],
+    }
+    ps = validate_problem_spec(data)
+    assert ps.sub_problems[0].rubric is None
+    assert ps.sub_problems[0].failure_evidence is None
+
+
+def test_validate_problem_spec_explicit_null_optional_fields_stay_none():
+    data = {
+        "raw_input": "test", "domain": "agentic_swe",
+        "sub_problems": [{
+            "id": "p1", "origin": "original", "parent_id": None,
+            "raw_text": "t", "failure_summary": "s",
+            "target_capability": ["x"], "trajectory_signal": "sig",
+            "hyde_positive": ["h1", "h2"], "keywords": ["k"],
+            "structured_filters": {},
+            "confidence": 0.9, "route": "pass",
+            "rubric": None, "failure_evidence": None,
+        }],
+    }
+    ps = validate_problem_spec(data)
+    assert ps.sub_problems[0].rubric is None
+    assert ps.sub_problems[0].failure_evidence is None

@@ -271,6 +271,11 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   font-size: 8px; line-height: 1.2; background: #e7f7ee; color: var(--ok);
   border: 1px solid #b7e6cd; padding: 1px 4px; border-radius: 8px; letter-spacing: 0;
 }
+/* 可回溯性(PR-3):命中项下的决定性证据步 + 命中 rubric 判据 */
+.hit .hit-evidence {
+  width: 100%; margin-top: 3px; font-size: 10px; line-height: 1.4;
+  color: var(--fg-dim); font-family: var(--mono);
+}
 
 /* trajectory detail steps */
 .step {
@@ -289,6 +294,12 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   box-shadow: 0 0 0 2px #0969da30;
 }
 .step.hit-dim { opacity: .5; }
+/* 决定性证据步(PR-3):judge 指认的 evidence_step */
+.step.evidence-step { border-left: 4px solid #d4a72c; }
+.step .evidence-star {
+  color: #9a6700; font-weight: 600; background: #fff8c5;
+  border: 1px solid #eac54f; border-radius: 8px; padding: 0 5px; margin-left: 4px;
+}
 .step .cap-tag {
   font-family: var(--mono); font-size: 9px; padding: 1px 6px; border-radius: 3px;
   color: #fff; margin: 3px 4px 0 0; display: inline-block; font-weight: 600;

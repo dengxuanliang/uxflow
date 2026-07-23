@@ -95,3 +95,29 @@ def test_rerank_rejects_mismatched_lengths():
         assert "same length" in str(exc)
     else:
         raise AssertionError("expected ValueError")
+
+
+def test_rerank_carries_evidence_step_and_criteria_hit():
+    """PR-3 传播链：rerank 把 JudgeResult 的 evidence_step/criteria_hit 搬进 ScoredCandidate。"""
+    hits = [_hit("t1", 0, 0.5)]
+    judged = [
+        JudgeResult(
+            match=True,
+            confidence=0.9,
+            spans=[{"start_step": 2, "end_step": 2}],
+            evidence_step=2,
+            criteria_hit=["writes_test_first"],
+        )
+    ]
+    out = rerank(hits, judged, _SUB, trajectory_path="/x.jsonl")
+    assert out[0].evidence_step == 2
+    assert out[0].criteria_hit == ["writes_test_first"]
+
+
+def test_rerank_default_evidence_fields_when_absent():
+    """老 JudgeResult（默认 evidence_step=None/criteria_hit=[]）→ ScoredCandidate 同默认。"""
+    hits = [_hit("t1", 0, 0.5)]
+    judged = [JudgeResult(match=False, confidence=0.1, spans=[])]
+    out = rerank(hits, judged, _SUB, trajectory_path="/x.jsonl")
+    assert out[0].evidence_step is None
+    assert out[0].criteria_hit == []

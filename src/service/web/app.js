@@ -528,6 +528,18 @@ function renderHits() {
     hd.innerHTML =
       `<span><span class="hit-id">${escapeHtml(h.trajectory_id)}</span>` +
       `<span class="hit-seg"> · slice${h.slice_index} · ${h.caps.length}片段</span></span>${badge}`;
+    // 可回溯性(PR-3):judge 定位的决定性证据步 + 命中的 rubric 判据。
+    if (h.evidence_step != null || (h.criteria_hit && h.criteria_hit.length)) {
+      const ev = document.createElement("div");
+      ev.className = "hit-evidence";
+      const parts = [];
+      if (h.evidence_step != null) parts.push(`⭐ 决定性证据: step ${h.evidence_step}`);
+      if (h.criteria_hit && h.criteria_hit.length) {
+        parts.push(`命中判据: ${h.criteria_hit.map(escapeHtml).join(" / ")}`);
+      }
+      ev.innerHTML = parts.join(" · ");
+      hd.appendChild(ev);
+    }
     hd.onclick = () => selectTrajectory(h);
     el.appendChild(hd);
   }
@@ -622,8 +634,12 @@ function renderDetail() {
     const roleIcon = { user: "👤", assistant: "🤖", tool: "⚙", system: "◆" }[step.role] || "·";
     const head = document.createElement("div");
     head.className = "step-head";
+    // 决定性证据步(PR-3):judge 指认的 evidence_step 上加星标,一眼定位证据落点。
+    const isEvidence = hit && hit.evidence_step != null && step.index === hit.evidence_step;
     head.innerHTML = `${roleIcon} ${escapeHtml(step.role)}` +
-      (step.tool_call_name ? ` · <span class="tc">🔧 ${escapeHtml(step.tool_call_name)}</span>` : "");
+      (step.tool_call_name ? ` · <span class="tc">🔧 ${escapeHtml(step.tool_call_name)}</span>` : "") +
+      (isEvidence ? ` <span class="evidence-star" title="judge 指认的决定性证据步">⭐ 决定性证据</span>` : "");
+    if (isEvidence) sd.classList.add("evidence-step");
     sd.appendChild(head);
 
     // body

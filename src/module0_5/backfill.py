@@ -61,6 +61,7 @@ async def run_backfill(
             slices=slices,
             target_capability=[label],
             trajectory_signal=new_label.description,
+            rubric=None,  # 回填路径无 sub_problem/无 rubric 源 → 走旧 prompt（本次不增强）
         )
     except Exception as e:
         return BackfillResult(label=label, candidates_screened=len(slices),

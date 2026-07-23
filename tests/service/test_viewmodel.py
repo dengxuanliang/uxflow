@@ -14,6 +14,8 @@ class FakeScored:
     judge_confidence: float
     loss_mask_spans: list
     judge_match: bool = True
+    evidence_step: int | None = None
+    criteria_hit: list = field(default_factory=list)
 
 
 def _spec():
@@ -133,6 +135,77 @@ def test_candidate_for_other_subproblem_is_ignored():
     )
     total_hits = sum(c["hit_count"] for c in view["problems"][0]["capabilities"])
     assert total_hits == 0  # 不同 sub_problem 的候选不挂到这里
+
+
+def test_inspector_view_surfaces_evidence_step_and_criteria_hit():
+    """PR-3：InspectorView 从 ScoredCandidate 带出 evidence_step/criteria_hit。"""
+    scored = [FakeScored("t1", 0, "p1", ["valid_syntax_in_toolcall"], 0.8, 0.9,
+                         [{"start_step": 1, "end_step": 2}],
+                         evidence_step=2, criteria_hit=["写出可运行代码"])]
+    select_result = {"targeted": [], "manifest": {
+        "targeted_count": 0, "general_count": 0, "general_ratio": 0.3}}
+    view = build_inspector_view(
+        run_id="r1", spec=_spec(), scored=scored, select_result=select_result
+    )
+    hit = view["problems"][0]["capabilities"][0]["hit_trajectories"][0]
+    assert hit["evidence_step"] == 2
+    assert hit["criteria_hit"] == ["写出可运行代码"]
+
+
+def test_runs_path_evidence_survives_real_rerank_to_view_e2e():
+    """PR-3 /runs 传播链贯穿 e2e（防未来某一环重构断链）：用真实 rerank() 产真实
+    ScoredCandidate，喂 build_inspector_view，断言 judge 的 evidence_step/criteria_hit
+    一路活到人审界面。此路径不走 judge_cache（/runs 生产路径的可回溯性全靠这条链）。"""
+    from module1.models import JudgeResult, TrajectorySignature
+    from module1.store import RecallHit
+    from module2.rerank import rerank
+
+    sig = TrajectorySignature(
+        trajectory_id="t1", slice_index=0, step_range=(0, 5), step_count=6,
+        turn_count=1, languages=["python"], tools_used=["Bash"],
+        has_error_pattern=False, has_success_pattern=True,
+        has_verification_step=False, bm25_tokens=["python"], embedding=[0.1] * 1024,
+    )
+    hits = [RecallHit(signature=sig, rrf_score=1.0)]
+    judged = [JudgeResult(match=True, confidence=0.9,
+                          spans=[{"start_step": 1, "end_step": 2}],
+                          evidence_step=2, criteria_hit=["写出可运行代码"])]
+    sub = {"id": "p1", "target_capability": ["valid_syntax_in_toolcall"]}
+
+    scored = rerank(hits, judged, sub, trajectory_path="/x.jsonl")  # 真实 ScoredCandidate
+    select_result = {"targeted": [], "manifest": {
+        "targeted_count": 0, "general_count": 0, "general_ratio": 0.3}}
+    view = build_inspector_view(
+        run_id="r1", spec=_spec(), scored=scored, select_result=select_result
+    )
+    hit = view["problems"][0]["capabilities"][0]["hit_trajectories"][0]
+    assert hit["evidence_step"] == 2                    # judge → rerank → view，未断链
+    assert hit["criteria_hit"] == ["写出可运行代码"]
+
+
+def test_inspector_view_evidence_fields_default_when_absent():
+    """老 ScoredCandidate 无 evidence_step/criteria_hit（getattr 降级）→ None/[]。"""
+    @dataclass
+    class LegacyScored:
+        trajectory_id: str
+        slice_index: int
+        sub_problem_id: str
+        capability: list
+        relevance_score: float
+        judge_confidence: float
+        loss_mask_spans: list
+        judge_match: bool = True
+
+    scored = [LegacyScored("t1", 0, "p1", ["valid_syntax_in_toolcall"], 0.8, 0.9,
+                           [{"start_step": 1, "end_step": 2}])]
+    select_result = {"targeted": [], "manifest": {
+        "targeted_count": 0, "general_count": 0, "general_ratio": 0.3}}
+    view = build_inspector_view(
+        run_id="r1", spec=_spec(), scored=scored, select_result=select_result
+    )
+    hit = view["problems"][0]["capabilities"][0]["hit_trajectories"][0]
+    assert hit["evidence_step"] is None
+    assert hit["criteria_hit"] == []
 
 
 def test_build_trajectory_index():

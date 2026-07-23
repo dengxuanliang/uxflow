@@ -429,3 +429,163 @@ async def test_compiler_drops_proposals_from_dropped_items(taxonomy):
                              embedding_model=FakeEmbedder(dimension=8))
     await compiler.compile("写入py文件有语法错误")
     assert compiler.label_proposals == []
+
+
+# ── PR-2: compile 扩参 failure_evidence + rubric/evidence 采集 + 降级 ──
+
+
+async def test_compile_default_none_unchanged(taxonomy):
+    """扩参默认 None：不传 failure_evidence 时行为与旧版一致（happy path 不破坏）。"""
+    gw = FakeGateway([_C1_OK, _C2_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    assert len(spec.sub_problems) == 1
+    # 未产 rubric/evidence → None
+    assert spec.sub_problems[0].rubric is None
+    assert spec.sub_problems[0].failure_evidence is None
+
+
+async def test_compile_failure_evidence_passed_into_call2(taxonomy):
+    """failure_evidence 传入时透传到 Call 2 的 system prompt。"""
+    gw = FakeGateway([_C1_OK, _C2_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    await compiler.compile("写入py文件有语法错误",
+                           failure_evidence="MAGIC_EVIDENCE_步骤3_SyntaxError")
+    # gw.calls[1] 是 Call 2；system prompt 应含注入的证据文本
+    call2_messages = gw.calls[1][0]
+    call2_system = call2_messages[0]["content"]
+    assert "MAGIC_EVIDENCE_步骤3_SyntaxError" in call2_system
+
+
+async def test_compile_collects_rubric_and_failure_evidence(taxonomy):
+    """_build_sub_problem 采集 LLM 产出的合法 rubric / failure_evidence。"""
+    c2 = '''[{
+        "id": "p1",
+        "target_capability": ["valid_syntax_in_toolcall"],
+        "trajectory_signal": "s",
+        "hyde_positive": ["片段一超过二十字符的假设正例轨迹", "片段二超过二十字符的假设正例轨迹"],
+        "keywords": ["k"],
+        "structured_filters": {},
+        "confidence": 0.92,
+        "route": "pass",
+        "rubric": {"positive_criteria": ["写出可运行代码"], "negative_criteria": ["产出 SyntaxError"],
+                   "decisive_evidence": "工具调用后 observation 无 SyntaxError 的步", "capability_kind": "avoidance"},
+        "failure_evidence": {"trajectory_id": "traj_evi", "evidence_steps": [2], "observed_failure": "生成含 SyntaxError 的代码"}
+    }]'''
+    gw = FakeGateway([_C1_OK, c2])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误", failure_evidence="现场文本")
+    sp = spec.sub_problems[0]
+    assert sp.rubric is not None
+    assert sp.rubric.capability_kind == "avoidance"
+    assert sp.rubric.positive_criteria == ["写出可运行代码"]
+    assert sp.failure_evidence is not None
+    assert sp.failure_evidence.trajectory_id == "traj_evi"
+    assert sp.failure_evidence.evidence_steps == [2]
+
+
+async def test_compile_bad_rubric_degrades_to_none_not_drop(taxonomy):
+    """坏 rubric（子键缺失 → KeyError）→ 降级 None，sub_problem 其余字段仍构建，不 drop。"""
+    c2 = '''[{
+        "id": "p1",
+        "target_capability": ["valid_syntax_in_toolcall"],
+        "trajectory_signal": "s",
+        "hyde_positive": ["片段一超过二十字符的假设正例轨迹", "片段二超过二十字符的假设正例轨迹"],
+        "keywords": ["k"],
+        "structured_filters": {},
+        "confidence": 0.92,
+        "route": "pass",
+        "rubric": {"positive_criteria": ["x"]},
+        "failure_evidence": {"trajectory_id": "t1"}
+    }]'''
+    gw = FakeGateway([_C1_OK, c2])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误", failure_evidence="现场文本")
+    # 关键：不 drop —— sub_problem 仍在，其余字段照常
+    assert len(spec.sub_problems) == 1
+    assert len(compiler.dropped_records) == 0
+    sp = spec.sub_problems[0]
+    assert sp.id == "p1"
+    assert sp.target_capability == ["valid_syntax_in_toolcall"]
+    # 半残增强字段降级为 None
+    assert sp.rubric is None
+    assert sp.failure_evidence is None
+
+
+async def test_compile_structurally_wrong_rubric_type_degrades(taxonomy):
+    """rubric 是非 dict（如字符串）→ TypeError/其它 → 降级 None，不崩。"""
+    c2 = '''[{
+        "id": "p1",
+        "target_capability": ["valid_syntax_in_toolcall"],
+        "trajectory_signal": "s",
+        "hyde_positive": ["片段一超过二十字符的假设正例轨迹", "片段二超过二十字符的假设正例轨迹"],
+        "keywords": ["k"],
+        "structured_filters": {},
+        "confidence": 0.92,
+        "route": "pass",
+        "rubric": "this should be an object"
+    }]'''
+    gw = FakeGateway([_C1_OK, c2])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    assert len(spec.sub_problems) == 1
+    assert spec.sub_problems[0].rubric is None
+
+
+async def test_compile_invalid_capability_kind_degrades_to_none_not_drop(taxonomy):
+    """PR-3 (F)：非法 capability_kind → _parse_rubric 抛 ValueError → _parse_optional 吞成
+    rubric=None，sub_problem 不被 drop（compiler 侧降级，不丢合格问题）。"""
+    c2 = '''[{
+        "id": "p1",
+        "target_capability": ["valid_syntax_in_toolcall"],
+        "trajectory_signal": "s",
+        "hyde_positive": ["片段一超过二十字符的假设正例轨迹", "片段二超过二十字符的假设正例轨迹"],
+        "keywords": ["k"],
+        "structured_filters": {},
+        "confidence": 0.92,
+        "route": "pass",
+        "rubric": {"positive_criteria": ["p"], "negative_criteria": ["n"],
+                   "decisive_evidence": "d", "capability_kind": "not_a_real_kind"}
+    }]'''
+    gw = FakeGateway([_C1_OK, c2])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误")
+    # 不 drop：合格问题保留，只是 rubric 降级为 None
+    assert len(spec.sub_problems) == 1
+    assert len(compiler.dropped_records) == 0
+    assert spec.sub_problems[0].rubric is None
+
+
+async def test_compile_no_trajectory_evidence_drop_via_route(taxonomy):
+    """决策 6：Call 2 判定认领不到证据 → route=drop + no_trajectory_evidence。
+    这走既有 route!=pass 的 _record_dropped 分流（非解析降级），落审计桶。"""
+    c2 = '''[{
+        "id": "p1",
+        "target_capability": ["x"],
+        "trajectory_signal": "s",
+        "hyde_positive": ["片段一超过二十字符的假设正例轨迹", "片段二超过二十字符的假设正例轨迹"],
+        "keywords": ["k"],
+        "structured_filters": {},
+        "confidence": 0.2,
+        "route": "drop",
+        "drop_reason": "no_trajectory_evidence"
+    }]'''
+    gw = FakeGateway([_C1_OK, c2])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    spec = await compiler.compile("写入py文件有语法错误", failure_evidence="现场文本")
+    assert len(spec.sub_problems) == 0
+    assert len(compiler.dropped_records) == 1
+    assert compiler.dropped_records[0].drop_reason == "no_trajectory_evidence"
+
+
+async def test_call2prime_does_not_receive_failure_evidence(taxonomy):
+    """决策 3：Call 2' 路径不带 failure_evidence（澄清重评 system prompt 无证据段）。"""
+    gw = FakeGateway([_C1_OK, _C2_AMBIGUOUS, _C3_OK, _C2P_OK])
+    compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy, model="test-model", embedding_model=None)
+    await compiler.compile("解题过程中途停止", failure_evidence="现场文本_不该进Call2prime")
+    # Call 2'（第 4 次调用，index 3）的 system prompt 不含证据段/证据文本
+    c2p_system = gw.calls[3][0][0]["content"]
+    assert "现场文本_不该进Call2prime" not in c2p_system
+    assert "失败轨迹证据（在场" not in c2p_system
+    # 而 Call 2（index 1）确实带了证据
+    assert "现场文本_不该进Call2prime" in gw.calls[1][0][0]["content"]

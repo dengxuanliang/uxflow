@@ -50,9 +50,17 @@
 
   // ─── 置信度 ───
   "confidence": number,                 // 必填。0–1，≥0.8 才出现在此列表中
-  "route": "pass"                       // 必填。本列表中恒为 "pass"
+  "route": "pass",                      // 必填。本列表中恒为 "pass"
+
+  // ─── 判据卡（可选，判据卡方案引入；见 §1.5）───
+  "rubric": CapabilityRubric | null,    // 可选。能力判据卡；null 时 judge 回退旧 prompt。缺省 null
+  // ─── 标签证据（可选，失败轨迹接入引入；见 §1.6）───
+  "failure_evidence": LabelEvidence | null // 可选。据失败轨迹认领的标签证据；无轨迹路径恒 null。缺省 null
 }
 ```
+
+> **`rubric` / `failure_evidence` 均为可选（nullable，缺省 null）**，不计入 SubProblem 的
+> 12 个必填字段；老 ProblemSpec 与纯文本 manifest 路径下二者恒 null，模块 1 行为不变。
 
 ### 1.3 StructuredFilters Schema
 
@@ -73,7 +81,46 @@
 {
   // 所有 SubProblem 字段 +
   "route": "drop",
-  "drop_reason": "ambiguous" | "not_applicable" | "label_diverged" | "other"
+  "drop_reason": "ambiguous" | "not_applicable" | "label_diverged" | "no_trajectory_evidence" | "other"
+}
+```
+
+> **`no_trajectory_evidence`（失败轨迹接入引入）**：仅当输入为该问题提供了失败轨迹、且 Call 2
+> 逐子问题认领时**该子问题拿不到任何证据步**才使用（判定为 Call 1 over-split，轨迹优先剔除）。
+> **纯文本路径（无失败轨迹）下不会出现此值**。此枚举值四处同源，改动需同步：`schema.py`
+> `DROP_REASONS`、`prompts.py` 两份判定树、本表。
+
+### 1.5 CapabilityRubric Schema（SubProblem.rubric 的类型，可选）
+
+判据卡方案引入。`null` 时模块 1 judge 回退旧 prompt（向后兼容）。由 LLM（Call 2）从
+`raw_text` / `failure_summary` 蒸出，非从标签名凭空生成。
+
+```jsonc
+// CapabilityRubric
+{
+  "positive_criteria": string[],   // 1–3 条可观测的"正向展示"判据
+  "negative_criteria": string[],   // 1–3 条反例/失败模式
+  "decisive_evidence": string,     // 决定性证据的"形态"描述（哪类步骤、什么信号）；禁止硬编码检测器规则
+  "capability_kind": "presence" | "avoidance" | "recovery" // 分型信号，仅影响 judge 判读视角，不进任何管线 if-else 分支
+}
+```
+
+冻结枚举：`CAPABILITY_KINDS = {"presence", "avoidance", "recovery"}`。
+- `presence`（有痕）：找正向文本/结构标记本身，如 writes_test_first。
+- `avoidance`（无痕）：正例=坏模式的缺席，找"本可犯错的锚点 + 其后没犯错的枢轴步"。
+- `recovery`（转折）：error → 正确处置，如 recover_from_test_failure。
+
+### 1.6 LabelEvidence Schema（SubProblem.failure_evidence 的类型，可选）
+
+失败轨迹接入引入。仅当输入 manifest 为该问题提供了失败轨迹、且 Call 2 认领到证据步时非
+`null`；无轨迹或纯文本路径恒 `null`。
+
+```jsonc
+// LabelEvidence
+{
+  "trajectory_id": string,      // 失败轨迹 id（与模块 1 语料轨迹同 schema）
+  "evidence_steps": number[],   // 标签据以判定的失败轨迹步号（可回溯到现场）
+  "observed_failure": string    // 现场观测到的真实失败；轨迹在场时它覆盖 failure_summary 的措辞（raw_text 原话保留）
 }
 ```
 

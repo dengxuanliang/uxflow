@@ -162,3 +162,88 @@ def test_judge_reopen_persistence(tmp_path):
 def test_judge_cache_satisfies_protocol(tmp_path):
     cache = SqliteJudgeCache(tmp_path / "j.db")
     assert isinstance(cache, JudgeCache)
+
+
+# ---------------- JudgeCache: PR-3 可回溯字段 + 旧库迁移 ----------------
+
+def test_judge_evidence_fields_roundtrip(tmp_path):
+    """evidence_step / criteria_hit put→get 往返。"""
+    cache = SqliteJudgeCache(tmp_path / "j.db")
+    cache.put("sp1", "T1", 0, {
+        "match": True, "confidence": 0.9, "spans": [{"start_step": 2, "end_step": 2}],
+        "evidence_step": 2, "criteria_hit": ["写出可运行代码", "不重复读"],
+    })
+    got = cache.get("sp1", "T1", 0)
+    assert got["evidence_step"] == 2
+    assert got["criteria_hit"] == ["写出可运行代码", "不重复读"]
+
+
+def test_judge_evidence_fields_default_when_omitted(tmp_path):
+    """verdict 未带新字段（旧调用方）→ 存 NULL/[]，get 返回 None/[]，不崩。"""
+    cache = SqliteJudgeCache(tmp_path / "j.db")
+    cache.put("sp1", "T1", 0, {"match": False, "confidence": 0.1, "spans": []})
+    got = cache.get("sp1", "T1", 0)
+    assert got["evidence_step"] is None
+    assert got["criteria_hit"] == []
+
+
+def test_judge_cache_migrates_old_three_column_db(tmp_path):
+    """旧库（仅 matched/confidence/spans_json 三业务列）升级：迁移后 ALTER 出新列，
+    get/put 正常。模拟既有 DB 升级——不是只改 CREATE TABLE。"""
+    import sqlite3
+
+    db = tmp_path / "old.db"
+    # 手工建一个只有旧 3 业务列的 judge_cache 表（无 evidence_step/criteria_hit_json）
+    conn = sqlite3.connect(str(db))
+    conn.execute("""
+        CREATE TABLE judge_cache (
+            sub_problem_id TEXT NOT NULL,
+            trajectory_id TEXT NOT NULL,
+            slice_index INTEGER NOT NULL,
+            matched INTEGER NOT NULL,
+            confidence REAL NOT NULL,
+            spans_json TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (sub_problem_id, trajectory_id, slice_index)
+        )
+    """)
+    # 写一条旧数据（旧列）
+    conn.execute(
+        "INSERT INTO judge_cache (sub_problem_id, trajectory_id, slice_index, matched, confidence, spans_json)"
+        " VALUES (?,?,?,?,?,?)",
+        ("sp_old", "T0", 0, 1, 0.7, "[]"),
+    )
+    conn.commit()
+    conn.close()
+
+    # 打开 → 触发幂等 ALTER 迁移
+    cache = SqliteJudgeCache(db)
+
+    # 旧行仍可读，新列降级为 None/[]
+    old = cache.get("sp_old", "T0", 0)
+    assert old is not None
+    assert old["match"] is True
+    assert old["evidence_step"] is None
+    assert old["criteria_hit"] == []
+
+    # 新写入携带新字段可往返
+    cache.put("sp_new", "T1", 0, {
+        "match": True, "confidence": 0.9, "spans": [],
+        "evidence_step": 5, "criteria_hit": ["c1"],
+    })
+    new = cache.get("sp_new", "T1", 0)
+    assert new["evidence_step"] == 5
+    assert new["criteria_hit"] == ["c1"]
+
+
+def test_judge_cache_migration_idempotent(tmp_path):
+    """重复打开已迁移库不因 duplicate column 崩（幂等）。"""
+    db = tmp_path / "j.db"
+    c1 = SqliteJudgeCache(db)
+    c1.put("sp1", "T1", 0, {"match": True, "confidence": 0.9, "spans": [],
+                            "evidence_step": 1, "criteria_hit": ["c"]})
+    c1.close()
+    c2 = SqliteJudgeCache(db)  # 再次打开 → ALTER 应被 OperationalError 吞掉
+    got = c2.get("sp1", "T1", 0)
+    assert got["evidence_step"] == 1
+    assert got["criteria_hit"] == ["c"]

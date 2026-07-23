@@ -218,3 +218,116 @@ async def test_run_scored_soft_scoring(trajectories_path, problem_spec_dict):
     assert scored
     assert all(s.relevance_score >= 0.0 for s in scored)
     assert scored == sorted(scored, key=lambda s: s.relevance_score, reverse=True)
+
+
+# ── PR-3: rubric 透传到 4 处 judge_batch 调用点 ──
+
+_RUBRIC = {
+    "positive_criteria": ["写出可运行代码"],
+    "negative_criteria": ["产出 SyntaxError"],
+    "decisive_evidence": "工具调用后 observation 无 SyntaxError 的步",
+    "capability_kind": "avoidance",
+}
+
+
+class SpyJudge:
+    """记录每次 judge_batch 收到的 rubric，返回带 evidence_step/criteria_hit 的结果。"""
+    def __init__(self):
+        self.rubrics = []
+
+    async def judge_batch(self, *, slices, target_capability, trajectory_signal, rubric=None):
+        from module1.models import JudgeResult
+        self.rubrics.append(rubric)
+        return [
+            JudgeResult(match=True, confidence=0.9, spans=[{"start_step": 0, "end_step": 1}],
+                        evidence_step=1, criteria_hit=["写出可运行代码"])
+            for _ in slices
+        ]
+
+
+class FakeCache:
+    """内存 judge_cache，用于 search 路径测试。"""
+    def __init__(self):
+        self.store = {}
+        self.puts = []
+
+    def get(self, sp_id, traj_id, slice_index):
+        return self.store.get((sp_id, traj_id, slice_index))
+
+    def put(self, sp_id, traj_id, slice_index, verdict):
+        self.puts.append(verdict)
+        self.store[(sp_id, traj_id, slice_index)] = verdict
+
+
+def _spec_with_rubric(problem_spec_dict):
+    spec = dict(problem_spec_dict)
+    spec["sub_problems"] = [dict(sp) for sp in problem_spec_dict["sub_problems"]]
+    spec["sub_problems"][0]["rubric"] = _RUBRIC
+    return spec
+
+
+async def test_process_sub_problem_passes_rubric(trajectories_path, problem_spec_dict):
+    """legacy run 路径 (_process_sub_problem) 把 rubric 传给 judge。"""
+    spec = _spec_with_rubric(problem_spec_dict)
+    cfg = PipelineConfig(judge_model="test-model", recall_top_n=5)
+    pipeline = TrajectoryPipeline(config=cfg, gateway=FakeGateway())
+    pipeline._build_index([trajectories_path])
+    spy = SpyJudge()
+    pipeline._judge = spy
+    await pipeline._process_sub_problem(spec["sub_problems"][0], "spec")
+    assert spy.rubrics and all(r == _RUBRIC for r in spy.rubrics)
+
+
+async def test_score_sub_problem_passes_rubric(trajectories_path, problem_spec_dict):
+    """run_scored 生产路径 (_score_sub_problem) 把 rubric 传给 judge。"""
+    spec = _spec_with_rubric(problem_spec_dict)
+    cfg = PipelineConfig(judge_model="test-model", recall_top_n=5)
+    pipeline = TrajectoryPipeline(config=cfg, gateway=FakeGateway())
+    pipeline._build_index([trajectories_path])
+    spy = SpyJudge()
+    pipeline._judge = spy
+    scored = await pipeline._score_sub_problem(spec["sub_problems"][0])
+    assert spy.rubrics and all(r == _RUBRIC for r in spy.rubrics)
+    # 传播链：rerank 把 evidence_step/criteria_hit 搬进 ScoredCandidate
+    assert scored
+    assert all(sc.evidence_step == 1 for sc in scored)
+    assert all(sc.criteria_hit == ["写出可运行代码"] for sc in scored)
+
+
+async def test_score_sub_problem_cached_search_passes_rubric(trajectories_path, problem_spec_dict):
+    """search 生产路径 (_score_sub_problem_cached，最易漏) 把 rubric 传给 judge，
+    且 judge_cache.put 带上 evidence_step/criteria_hit。"""
+    spec = _spec_with_rubric(problem_spec_dict)
+    cfg = PipelineConfig(judge_model="test-model", recall_top_n=5)
+    pipeline = TrajectoryPipeline(config=cfg, gateway=FakeGateway())
+    pipeline._build_index([trajectories_path])
+    spy = SpyJudge()
+    pipeline._judge = spy
+    cache = FakeCache()
+    scored = await pipeline._score_sub_problem_cached(spec["sub_problems"][0], cache)
+    assert spy.rubrics and all(r == _RUBRIC for r in spy.rubrics)
+    # judge_cache.put 收到的 verdict 带新字段
+    assert cache.puts
+    assert all(v["evidence_step"] == 1 for v in cache.puts)
+    assert all(v["criteria_hit"] == ["写出可运行代码"] for v in cache.puts)
+    # 传播链同样在 cached 路径成立
+    assert scored and all(sc.evidence_step == 1 for sc in scored)
+
+
+def test_dict_to_judge_result_reads_new_fields():
+    """_dict_to_judge_result 从 cache dict 补读 evidence_step/criteria_hit。"""
+    from module1.pipeline import _dict_to_judge_result
+    jr = _dict_to_judge_result({
+        "match": True, "confidence": 0.8, "spans": [],
+        "evidence_step": 4, "criteria_hit": ["c1"],
+    })
+    assert jr.evidence_step == 4
+    assert jr.criteria_hit == ["c1"]
+
+
+def test_dict_to_judge_result_missing_new_fields_degrade():
+    """旧 cache dict（无新字段）→ 降级 None/[]，不崩（向后兼容）。"""
+    from module1.pipeline import _dict_to_judge_result
+    jr = _dict_to_judge_result({"match": True, "confidence": 0.8, "spans": []})
+    assert jr.evidence_step is None
+    assert jr.criteria_hit == []

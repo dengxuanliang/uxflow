@@ -89,3 +89,26 @@ def test_embedding_blob_survives_reopen_for_recall(tmp_path):
     hits = s2.recall(structured_filters={}, keywords=[],
                      query_embeddings=[[1.0, 0.0]], top_n=1)
     assert hits[0].signature.trajectory_id == "A"
+
+
+def test_store_usable_from_a_different_thread(tmp_path):
+    """Regression: under ASGI the store is built at startup in one thread but the
+    pipeline touches it from a worker thread. Without check_same_thread=False the
+    /runs path died with 'SQLite objects created in a thread can only be used in
+    that same thread'. Build here, then add+recall from another thread."""
+    import threading
+
+    store = SqliteSliceStore(tmp_path / "t.db")  # built in this (main) thread
+    result = {}
+
+    def worker():
+        # These calls run in a DIFFERENT thread than the one that opened the conn.
+        store.add_batch([_sig("A", 0, ["async"], [1.0, 0.0])])
+        hits = store.recall(structured_filters={}, keywords=["async"],
+                            query_embeddings=[[1.0, 0.0]], top_n=1)
+        result["tid"] = hits[0].signature.trajectory_id if hits else None
+
+    t = threading.Thread(target=worker)
+    t.start()
+    t.join()
+    assert result["tid"] == "A"  # no cross-thread SQLite error, recall works

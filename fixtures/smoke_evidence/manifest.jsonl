@@ -1,0 +1,1 @@
+{"question": "agent 修 bug 时老是反复读同一个文件，绕圈子不推进，应该看一次就动手改", "failure_trajectory": "fixtures/smoke_evidence/failure_traj.jsonl"}

@@ -1,5 +1,19 @@
 from module1.models import Step, Slice
-from module1.judge import Judge, _build_judge_prompt, _parse_judge_response
+from module1.judge import (
+    Judge,
+    _build_judge_prompt,
+    _parse_judge_response,
+    _JUDGE_SYSTEM_PROMPT,
+    _JUDGE_SYSTEM_PROMPT_RUBRIC,
+)
+
+
+_RUBRIC = {
+    "positive_criteria": ["工具调用前先检查已读文件", "不重复读同一文件"],
+    "negative_criteria": ["连续多次 Read 同一路径"],
+    "decisive_evidence": "本可重复读却转而复用已有内容的决策步",
+    "capability_kind": "avoidance",
+}
 
 
 class FakeGateway:
@@ -157,3 +171,118 @@ def test_parse_judge_response_match_string_true():
     assert len(results) == 1
     assert results[0].match is True
     assert results[0].confidence == 0.75
+
+
+# ── PR-3: rubric 扩参 + evidence_step/criteria_hit 解析 ──
+
+def test_build_judge_prompt_none_rubric_legacy_format():
+    """rubric=None → 走旧格式，prompt 不含 rubric 对照段。"""
+    prompt = _build_judge_prompt(
+        slices=[_make_slice(4)],
+        target_capability=["avoid_redundant_repetition"],
+        trajectory_signal="signal",
+        rubric=None,
+    )
+    assert "判据卡" not in prompt
+    assert "positive_criteria" not in prompt
+    assert "avoid_redundant_repetition" in prompt
+
+
+def test_build_judge_prompt_with_rubric_injects_criteria():
+    """rubric=dict → prompt 含 positive/negative_criteria + kind + decisive_evidence。"""
+    prompt = _build_judge_prompt(
+        slices=[_make_slice(4)],
+        target_capability=["avoid_redundant_repetition"],
+        trajectory_signal="signal",
+        rubric=_RUBRIC,
+    )
+    assert "判据卡" in prompt
+    assert "不重复读同一文件" in prompt          # positive_criteria
+    assert "连续多次 Read 同一路径" in prompt      # negative_criteria
+    assert "avoidance" in prompt                   # capability_kind
+    assert "本可重复读却转而复用已有内容的决策步" in prompt  # decisive_evidence
+
+
+def test_parse_judge_response_extracts_evidence_step_and_criteria_hit():
+    raw = ('[{"match": true, "confidence": 0.9, "evidence_step": 3, '
+           '"criteria_hit": ["不重复读同一文件"], '
+           '"spans": [{"start_step": 3, "end_step": 3}], "reasoning": "ok"}]')
+    results = _parse_judge_response(raw, n_expected=1)
+    assert results[0].evidence_step == 3
+    assert results[0].criteria_hit == ["不重复读同一文件"]
+
+
+def test_parse_judge_response_missing_new_fields_degrade():
+    """旧格式响应（无 evidence_step/criteria_hit）→ 降级默认 None/[]，不崩。"""
+    raw = '[{"match": true, "confidence": 0.8, "spans": [], "reasoning": "x"}]'
+    results = _parse_judge_response(raw, n_expected=1)
+    assert results[0].evidence_step is None
+    assert results[0].criteria_hit == []
+
+
+def test_parse_judge_response_malformed_new_fields_degrade():
+    """evidence_step 非 int / criteria_hit 非 list → 降级默认，不崩。"""
+    raw = ('[{"match": true, "confidence": 0.8, "evidence_step": "third", '
+           '"criteria_hit": "not a list", "spans": [], "reasoning": "x"}]')
+    results = _parse_judge_response(raw, n_expected=1)
+    assert results[0].evidence_step is None
+    assert results[0].criteria_hit == []
+
+
+def test_parse_judge_response_evidence_step_bool_rejected():
+    """bool 是 int 子类，evidence_step=true 应被拒 → None（不误当 1）。"""
+    raw = ('[{"match": true, "confidence": 0.8, "evidence_step": true, '
+           '"criteria_hit": [1, "keep", 2], "spans": [], "reasoning": "x"}]')
+    results = _parse_judge_response(raw, n_expected=1)
+    assert results[0].evidence_step is None
+    assert results[0].criteria_hit == ["keep"]  # 非 str 项被过滤
+
+
+async def test_judge_batch_none_rubric_uses_legacy_system_prompt():
+    resp = '[{"match": false, "confidence": 0.2, "spans": [], "reasoning": "x"}]'
+    gw = FakeGateway([resp])
+    judge = Judge(gateway=gw, model="test-model")
+    await judge.judge_batch(
+        slices=[_make_slice(4)],
+        target_capability=["x"],
+        trajectory_signal="s",
+        rubric=None,
+    )
+    system_content = gw.calls[0][0][0]["content"]
+    assert system_content == _JUDGE_SYSTEM_PROMPT
+
+
+async def test_judge_batch_with_rubric_uses_rubric_system_prompt():
+    resp = ('[{"match": true, "confidence": 0.9, "evidence_step": 2, '
+            '"criteria_hit": ["不重复读同一文件"], '
+            '"spans": [{"start_step": 2, "end_step": 2}], "reasoning": "ok"}]')
+    gw = FakeGateway([resp])
+    judge = Judge(gateway=gw, model="test-model")
+    results = await judge.judge_batch(
+        slices=[_make_slice(4)],
+        target_capability=["avoid_redundant_repetition"],
+        trajectory_signal="s",
+        rubric=_RUBRIC,
+    )
+    system_content = gw.calls[0][0][0]["content"]
+    user_content = gw.calls[0][0][1]["content"]
+    assert system_content == _JUDGE_SYSTEM_PROMPT_RUBRIC
+    assert "不重复读同一文件" in user_content
+    assert results[0].evidence_step == 2
+    assert results[0].criteria_hit == ["不重复读同一文件"]
+
+
+async def test_judge_batch_default_rubric_backward_compatible():
+    """不传 rubric（现有调用方）仍走旧路径、不破坏行为。"""
+    resp = '[{"match": true, "confidence": 0.7, "spans": [], "reasoning": "x"}]'
+    gw = FakeGateway([resp])
+    judge = Judge(gateway=gw, model="test-model")
+    results = await judge.judge_batch(
+        slices=[_make_slice(4)],
+        target_capability=["x"],
+        trajectory_signal="s",
+    )
+    assert gw.calls[0][0][0]["content"] == _JUDGE_SYSTEM_PROMPT
+    assert results[0].match is True
+    assert results[0].evidence_step is None
+    assert results[0].criteria_hit == []

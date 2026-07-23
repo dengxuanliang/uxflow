@@ -15,6 +15,9 @@ __all__ = [
     "SubProblem",
     "StructuredFilters",
     "DroppedSubProblem",
+    "CapabilityRubric",
+    "CAPABILITY_KINDS",
+    "LabelEvidence",
     "LANGUAGES",
     "TOOLS_USED",
     "DROP_REASONS",
@@ -33,8 +36,36 @@ TOOLS_USED = frozenset([
 ])
 
 DROP_REASONS = frozenset([
-    "ambiguous", "not_applicable", "label_diverged", "other",
+    "ambiguous", "not_applicable", "label_diverged", "no_trajectory_evidence", "other",
 ])
+
+# 契约 §1.5 冻结枚举 — CapabilityRubric.capability_kind 的合法取值
+CAPABILITY_KINDS = frozenset({"presence", "avoidance", "recovery"})
+
+
+@dataclass(frozen=True)
+class CapabilityRubric:
+    """契约 §1.5 CapabilityRubric — SubProblem.rubric 的类型（可选增强字段）。
+
+    由 Call 2 从 raw_text/failure_summary 蒸出；判据卡方案引入。null 时
+    module1 judge 回退旧 prompt（向后兼容）。
+    """
+    positive_criteria: list[str]   # 1-3 条可观测的"正向展示"判据
+    negative_criteria: list[str]   # 1-3 条反例/失败模式
+    decisive_evidence: str         # 决定性证据的"形态"描述；禁止硬编码检测器规则
+    capability_kind: str           # one of CAPABILITY_KINDS
+
+
+@dataclass(frozen=True)
+class LabelEvidence:
+    """契约 §1.6 LabelEvidence — SubProblem.failure_evidence 的类型（可选增强字段）。
+
+    失败轨迹接入引入。仅当输入 manifest 为该问题提供失败轨迹、且 Call 2
+    认领到证据步时非 None；无轨迹或纯文本路径恒 None。
+    """
+    trajectory_id: str             # 失败轨迹 id
+    evidence_steps: list[int]      # 标签据以判定的失败轨迹步号
+    observed_failure: str          # 现场观测到的真实失败
 
 
 @dataclass
@@ -57,7 +88,11 @@ class StructuredFilters:
 
 @dataclass
 class SubProblem:
-    """契约 §1.2 SubProblem — 12 required fields."""
+    """契约 §1.2 SubProblem — 12 required fields.
+
+    rubric / failure_evidence 是可选增强字段（缺省 None，不计入 12 个必填字段）：
+    缺省时行为与改动前逐字一致（judge 走旧 prompt、无标签证据）。
+    """
     id: str
     origin: str  # "original" | "clarified"
     parent_id: str | None
@@ -70,6 +105,8 @@ class SubProblem:
     structured_filters: StructuredFilters
     confidence: float  # 0-1
     route: str  # "pass" in sub_problems[]
+    rubric: CapabilityRubric | None = None       # 契约 §1.5，可选；缺省 None
+    failure_evidence: LabelEvidence | None = None  # 契约 §1.6，可选；缺省 None
 
     def __post_init__(self):
         if self.origin not in ("original", "clarified"):
@@ -133,6 +170,37 @@ def _parse_structured_filters(d: dict | None) -> StructuredFilters:
     )
 
 
+def _parse_rubric(d: dict | None) -> CapabilityRubric | None:
+    """Rebuild CapabilityRubric from nested dict; None (or missing) stays None.
+
+    capability_kind 不在 CAPABILITY_KINDS 时视为结构非法 → raise ValueError（LLM 输出
+    重建入口做校验，不动 dataclass 的构造点）。compiler 的 _parse_optional 已吞 ValueError
+    → 降级 rubric=None（不 drop 整条 sub_problem）。
+    """
+    if not d:
+        return None
+    kind = d["capability_kind"]
+    if kind not in CAPABILITY_KINDS:
+        raise ValueError(f"invalid capability_kind: {kind!r}")
+    return CapabilityRubric(
+        positive_criteria=d["positive_criteria"],
+        negative_criteria=d["negative_criteria"],
+        decisive_evidence=d["decisive_evidence"],
+        capability_kind=kind,
+    )
+
+
+def _parse_failure_evidence(d: dict | None) -> LabelEvidence | None:
+    """Rebuild LabelEvidence from nested dict; None (or missing) stays None."""
+    if not d:
+        return None
+    return LabelEvidence(
+        trajectory_id=d["trajectory_id"],
+        evidence_steps=d["evidence_steps"],
+        observed_failure=d["observed_failure"],
+    )
+
+
 def validate_problem_spec(data: dict) -> ProblemSpec:
     """Parse and validate a raw dict into a ProblemSpec.
 
@@ -155,6 +223,8 @@ def validate_problem_spec(data: dict) -> ProblemSpec:
             structured_filters=_parse_structured_filters(sp_data.get("structured_filters")),
             confidence=sp_data["confidence"],
             route=sp_data["route"],
+            rubric=_parse_rubric(sp_data.get("rubric")),
+            failure_evidence=_parse_failure_evidence(sp_data.get("failure_evidence")),
         ))
     return ProblemSpec(
         raw_input=data["raw_input"],
