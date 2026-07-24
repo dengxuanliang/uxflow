@@ -94,21 +94,15 @@ button#run:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ── Dual-mode header: search / ingest / stats ──────── */
 .modes { display: flex; flex-direction: column; gap: 12px; }
-.mode-bar { display: flex; gap: 18px; align-items: stretch; flex-wrap: wrap; }
+.mode-bar { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
+.mode-divider { align-self: stretch; width: 1px; background: var(--line-2); margin: 2px 0; }
 .mode-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-/* 左块：搜索，竖直排列，拉高与右块等高 */
-.mode-search {
-  flex: 1 1 300px; flex-direction: column; align-items: stretch; gap: 10px;
-  justify-content: center;
-}
-/* 右块：竖直两行 */
-.mode-right { display: flex; flex-direction: column; gap: 12px; flex: 2 1 460px; }
-.mode-ingest { flex: 0 0 auto; }
-.mode-dbops { flex: 0 0 auto; }
+.mode-search { flex: 1 1 300px; }
+.mode-ops { flex: 2 1 520px; }
 
-/* 搜索输入框：吃满左块高度（flex-basis auto），最小 40px */
+/* 搜索输入框：横向伸缩充满剩余空间，固定 40px 高 */
 .mode-search #question {
-  flex: 1 1 auto; min-width: 180px; min-height: 40px; box-sizing: border-box;
+  flex: 1; min-width: 180px; height: 40px; box-sizing: border-box;
   padding: 0 14px; font-size: 13px;
   font-family: var(--sans); color: var(--fg); background: #fff;
   border: 1px solid transparent; border-radius: 6px; outline: none;
@@ -130,10 +124,10 @@ button#btn-ingest:hover { background: #1a7f37; }
 button#btn-search:active, button#btn-ingest:active { transform: translateY(1px); }
 button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: not-allowed; }
 
-/* 库操作三按钮：与搜索/入库同尺寸（40px 高），三者等宽 */
+/* 库操作按钮：与入库按钮同尺寸（40px 高，内容自然宽） */
 .menu-btn {
-  flex: 1 1 0; height: 40px; box-sizing: border-box;
-  padding: 0 16px; cursor: pointer; font-size: 13px; font-weight: 600;
+  height: 40px; box-sizing: border-box;
+  padding: 0 18px; cursor: pointer; font-size: 13px; font-weight: 600;
   color: #fff; border-radius: 6px; letter-spacing: .5px; white-space: nowrap;
   transition: background .15s, transform .05s;
 }
