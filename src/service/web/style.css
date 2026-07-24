@@ -361,7 +361,7 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   margin-right: 6px; font-weight: 600;
 }
 
-/* ── 证据折叠（行内 accordion，spec §6）───────────────── */
+/* ── 证据按钮（点击弹详情 modal，spec §6）──────────────── */
 .evidence-toggle {
   margin-top: 4px;
   font-size: 11px;
@@ -373,30 +373,9 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   cursor: pointer;
 }
 .evidence-toggle:hover { background: var(--bg-3); }
-.evidence-toggle[aria-expanded="true"] {
-  color: var(--neon);
-  border-color: var(--neon);
-}
-.evidence-panel {
-  margin-top: 6px;
-  padding: 8px 10px;
-  border-left: 2px solid var(--gold);
-  background: var(--bg-2);
-  border-radius: 4px;
-  font-size: 12px;
-}
-.evidence-panel .ev-row {
-  display: flex;
-  gap: 8px;
-  margin: 2px 0;
-  align-items: baseline;
-}
-.evidence-panel .ev-k {
-  flex: 0 0 64px;
-  color: var(--fg-faint);
-}
-.evidence-panel .ev-v { flex: 1; color: var(--fg); }
-.evidence-panel .ev-cap {
+
+/* 证据弹窗内的能力色标签（脱离原 accordion，独立选择器）*/
+.mf-v .ev-cap {
   display: inline-block;
   color: #fff;
   border-radius: 3px;

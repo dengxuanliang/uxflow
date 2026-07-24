@@ -588,7 +588,7 @@ function renderHits() {
     hd.innerHTML =
       `<span><span class="hit-id">${escapeHtml(h.trajectory_id)}</span>` +
       `<span class="hit-seg"> · slice${h.slice_index} · ${h.caps.length}片段</span></span>${badge}`;
-    // 证据折叠：默认收起，点"证据"按钮就地展开（spec §6）。
+    // 证据：点击弹小窗（复用详情 modal），不再就地展开。
     const hasEvidence = h.evidence_step != null
       || (h.criteria_hit && h.criteria_hit.length);
     if (hasEvidence) {
@@ -596,20 +596,11 @@ function renderHits() {
       btn.className = "evidence-toggle";
       btn.type = "button";
       btn.textContent = "证据";
-      btn.setAttribute("aria-expanded", "false");
-
-      const panel = document.createElement("div");
-      panel.className = "evidence-panel hidden";
-      panel.innerHTML = renderEvidencePanel(h);
-
       btn.onclick = (e) => {
         e.stopPropagation();   // 不触发 selectTrajectory
-        const open = panel.classList.toggle("hidden") === false;
-        btn.setAttribute("aria-expanded", String(open));
+        openEvidenceModal(h);
       };
-
       hd.appendChild(btn);
-      hd.appendChild(panel);
     }
     hd.onclick = () => selectTrajectory(h);
     el.appendChild(hd);
@@ -781,29 +772,6 @@ function jumpToNextHighlight() {
   if (target) target.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 
-// 证据面板内容：决定性证据步 + 命中判据。多归属（一个 slice 命中多个能力/
-// 子问题）时按能力分组列出能力名，证据步/判据来自该 hit（按 sub_problem 聚合）。
-function renderEvidencePanel(h) {
-  const rows = [];
-  if (h.evidence_step != null) {
-    rows.push(`<div class="ev-row"><span class="ev-k">决定性证据</span>` +
-      `<span class="ev-v">⭐ step ${h.evidence_step}</span></div>`);
-  }
-  if (h.criteria_hit && h.criteria_hit.length) {
-    rows.push(`<div class="ev-row"><span class="ev-k">命中判据</span>` +
-      `<span class="ev-v">${h.criteria_hit.map(escapeHtml).join(" / ")}</span></div>`);
-  }
-  // c.color 来自后端 assign_colors 的固定调色板（非用户输入），故直接插入 style 安全。
-  const caps = (h.caps || []).map((c) =>
-    `<span class="ev-cap" style="background:${c.color}">${escapeHtml(c.label)}</span>`
-  ).join("");
-  if (caps) {
-    rows.push(`<div class="ev-row"><span class="ev-k">覆盖能力</span>` +
-      `<span class="ev-v">${caps}</span></div>`);
-  }
-  return rows.join("");
-}
-
 // ── utils ─────────────────────────────────────────────────────────
 function hexA(hex, a) {
   // "#rrggbb" + alpha(0..1) → rgba(); fallback passthrough for non-hex
@@ -854,6 +822,29 @@ function openCompileModal(p) {
   row(`HyDE 正例 (${hyde.length})`, hydeHtml);
 
   $("modal-title").textContent = `module0 编译详情 · ${p.id}`;
+  $("modal-body").innerHTML = rows.join("");
+  $("compile-modal").classList.remove("hidden");
+}
+
+// 证据弹窗：复用 #compile-modal 容器（同一时刻只开一个弹窗）。
+function openEvidenceModal(h) {
+  const rows = [];
+  const row = (label, html) => rows.push(
+    `<div class="mf-row"><div class="mf-k">${label}</div><div class="mf-v">${html}</div></div>`);
+
+  if (h.evidence_step != null) {
+    row("决定性证据", `<span class="mf-num">⭐ step ${h.evidence_step}</span>`);
+  }
+  if (h.criteria_hit && h.criteria_hit.length) {
+    row("命中判据", h.criteria_hit.map(escapeHtml).join(" / "));
+  }
+  const caps = (h.caps || []).map((c) =>
+    // c.color 来自后端 assign_colors 固定调色板（非用户输入），直接插入 style 安全。
+    `<span class="ev-cap" style="background:${c.color}">${escapeHtml(c.label)}</span>`
+  ).join("");
+  if (caps) row("覆盖能力", caps);
+
+  $("modal-title").textContent = `决定性证据 · ${h.trajectory_id}`;
   $("modal-body").innerHTML = rows.join("");
   $("compile-modal").classList.remove("hidden");
 }
