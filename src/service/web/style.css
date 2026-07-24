@@ -127,6 +127,13 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   color: #adbac7; font-family: var(--mono); font-size: 11px; letter-spacing: .3px;
 }
 
+/* 库信息行：左"库中…"，右"最终入选…"，同排左右分布 */
+.db-info-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+}
+.db-info-row .manifest { margin: 0; }
+
 /* dedup 提示条：淡黄，醒目但不刺眼 */
 .dedup-banner {
   margin: 10px 12px 0; padding: 9px 14px; border-radius: 6px;

@@ -38,7 +38,6 @@
           <button id="run" style="display:none">▶ 运行</button>
         </div>
       </div>
-      <div id="stats-bar" class="stats-bar"></div>
       <div id="db-bar" class="db-bar">
         <span class="db-label">库</span>
         <select id="db-select" class="db-select"></select>
@@ -46,8 +45,11 @@
         <button id="db-switch" class="db-btn" type="button">切换</button>
         <button id="db-clear" class="db-btn db-clear" type="button">🗑 清空当前库</button>
       </div>
+      <div class="db-info-row">
+        <div id="stats-bar" class="stats-bar"></div>
+        <div id="manifest-summary" class="manifest"></div>
+      </div>
     </div>
-    <div id="manifest-summary" class="manifest"></div>
   </header>
 
   <div id="dedup-banner" class="dedup-banner hidden"></div>
