@@ -95,11 +95,12 @@ button#run:disabled { opacity: .5; cursor: not-allowed; }
 /* ── Dual-mode header: search / ingest / stats ──────── */
 .modes { display: flex; flex-direction: column; gap: 12px; }
 .mode-bar { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
-.mode-divider { align-self: stretch; width: 1px; background: var(--border, #2a2a35); margin: 2px 0; }
+.mode-divider { align-self: stretch; width: 1px; background: var(--line-2); margin: 2px 0; }
 .mode-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.mode-search { flex: 1 1 320px; }
-.mode-ingest { flex: 2 1 460px; }
+.mode-search { flex: 1 1 300px; }
+.mode-ops { flex: 2 1 520px; }
 
+/* 搜索输入框：横向伸缩充满剩余空间，固定 40px 高 */
 .mode-search #question {
   flex: 1; min-width: 180px; height: 40px; box-sizing: border-box;
   padding: 0 14px; font-size: 13px;
@@ -116,16 +117,38 @@ button#btn-search, button#btn-ingest {
   color: #fff; border-radius: 6px; letter-spacing: .5px;
   transition: background .15s, transform .05s;
 }
-button#btn-search { background: var(--neon); border: 1px solid #0a5cc4; }
-button#btn-search:hover { background: #0a5cc4; }
-button#btn-ingest { background: #1f883d; border: 1px solid #1a7f37; }
-button#btn-ingest:hover { background: #1a7f37; }
+button#btn-search { background: #3B6EA8; border: 1px solid #325E8F; }
+button#btn-search:hover { background: #325E8F; }
+button#btn-ingest { background: #4E7F52; border: 1px solid #436E46; }
+button#btn-ingest:hover { background: #436E46; }
 button#btn-search:active, button#btn-ingest:active { transform: translateY(1px); }
 button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: not-allowed; }
+
+/* 库操作按钮：与入库按钮同尺寸（40px 高，内容自然宽） */
+.menu-btn {
+  height: 40px; box-sizing: border-box;
+  padding: 0 18px; cursor: pointer; font-size: 13px; font-weight: 600;
+  color: #fff; border-radius: 6px; letter-spacing: .5px; white-space: nowrap;
+  transition: background .15s, transform .05s;
+}
+.menu-btn:active { transform: translateY(1px); }
+.menu-switch { background: #287F7A; border: 1px solid #216B67; }
+.menu-switch:hover { background: #216B67; }
+.menu-new { background: #6B5A9A; border: 1px solid #5B4D84; }
+.menu-new:hover { background: #5B4D84; }
+.menu-clear { background: #A34747; border: 1px solid #8C3C3C; }
+.menu-clear:hover { background: #8C3C3C; }
 
 .stats-bar {
   color: #adbac7; font-family: var(--mono); font-size: 11px; letter-spacing: .3px;
 }
+
+/* 库信息行：左"库中…"，右"最终入选…"，同排左右分布 */
+.db-info-row {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 16px; flex-wrap: wrap;
+}
+.db-info-row .manifest { margin: 0; }
 
 /* dedup 提示条：淡黄，醒目但不刺眼 */
 .dedup-banner {
@@ -271,12 +294,11 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   font-size: 8px; line-height: 1.2; background: #e7f7ee; color: var(--ok);
   border: 1px solid #b7e6cd; padding: 1px 4px; border-radius: 8px; letter-spacing: 0;
 }
-/* 可回溯性(PR-3):命中项下的决定性证据步 + 命中 rubric 判据 */
-.hit .hit-evidence {
-  width: 100%; margin-top: 3px; font-size: 10px; line-height: 1.4;
-  color: var(--fg-dim); font-family: var(--mono);
+/* 左侧轨迹信息：可收缩，过长时省略号，避免挤压右侧徽标/证据按钮 */
+.hit .hit-main {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-
 /* trajectory detail steps */
 .step {
   padding: 7px 9px; margin: 5px 0; border-radius: 6px; white-space: pre-wrap;
@@ -366,3 +388,74 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   display: inline-block; font-family: var(--mono); font-size: 9px; color: var(--neon);
   margin-right: 6px; font-weight: 600;
 }
+
+/* ── 证据按钮（点击弹详情 modal，spec §6）──────────────── */
+.evidence-toggle {
+  flex: 0 0 auto; white-space: nowrap;
+  font-size: 11px;
+  padding: 2px 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-2);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.evidence-toggle:hover { background: var(--bg-3); }
+
+/* 证据弹窗内的能力色标签（脱离原 accordion，独立选择器）*/
+.mf-v .ev-cap {
+  display: inline-block;
+  color: #fff;
+  border-radius: 3px;
+  padding: 0 6px;
+  margin-right: 4px;
+  font-size: 11px;
+}
+
+/* ── 库管理控件（spec §7）──────────────────────────── */
+.db-btn {
+  font-size: 12px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--line-2);
+  background: rgba(255,255,255,.85);
+  color: var(--fg);
+  cursor: pointer;
+}
+.db-btn:hover { background: #fff; }
+.db-clear { color: var(--hot); border-color: var(--hot); }
+
+/* 切换库弹窗内的下拉 */
+.switch-select {
+  width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 13px;
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px;
+  color: var(--fg); background: #fff;
+}
+.switch-select:focus { outline: none; border-color: var(--neon); box-shadow: 0 0 0 2px #0969da33; }
+
+/* 新建库弹窗：套用 .modal 规范，补输入区样式 */
+.newdb-modal { width: min(440px, 92vw); }
+.newdb-hint { margin: 0 0 10px; font-size: 12px; color: var(--fg-dim); line-height: 1.5; }
+.newdb-hint code { font-family: var(--mono); background: var(--bg-2); padding: 0 4px; border-radius: 3px; }
+.newdb-input {
+  width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 13px;
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--fg);
+}
+.newdb-input:focus { outline: none; border-color: var(--neon); box-shadow: 0 0 0 2px #0969da33; }
+.newdb-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.db-primary { background: var(--neon); color: #fff; border-color: var(--neon); }
+.db-primary:hover { background: var(--neon-2); }
+
+/* 文件槽取消选择 ✕：框内右侧小图标，默认淡、悬停才明显 */
+.slot-clear {
+  position: absolute; top: 50%; right: 6px; transform: translateY(-50%);
+  display: none; z-index: 2;
+  width: 16px; height: 16px; padding: 0;
+  border: none; border-radius: 50%; background: transparent; cursor: pointer;
+  color: var(--fg-faint); font-size: 10px; line-height: 16px; text-align: center;
+  opacity: .6; transition: opacity .12s, background .12s, color .12s;
+}
+.file-slot.filled .slot-clear { display: block; }
+.slot-clear:hover { opacity: 1; color: var(--hot); background: #cf222e1f; }
+/* 已选文件时给名字右侧留出 ✕ 的空间，避免重叠 */
+.file-slot.filled .slot-name { padding-right: 20px; }

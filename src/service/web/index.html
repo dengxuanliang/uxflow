@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>uxflow · SWE 轨迹优选器</title>
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/style.css?v=7">
 </head>
 <body>
   <header>
@@ -20,25 +20,32 @@
           <button id="btn-search">🔍 搜索</button>
         </div>
         <div class="mode-divider"></div>
-        <div class="mode-row mode-ingest">
+        <div class="mode-row mode-ops">
           <label class="file-slot" id="slot-manifest">
             <span class="slot-tag">用户清单 <em>.txt / .jsonl</em></span>
             <span class="slot-name" id="name-manifest">点击选择文件…</span>
             <input type="file" id="manifest" accept=".txt,.jsonl">
+            <button type="button" class="slot-clear" id="clear-manifest" aria-label="取消选择">✕</button>
           </label>
           <label class="file-slot" id="slot-trajectories">
             <span class="slot-tag">候选回流 <em>.jsonl</em></span>
             <span class="slot-name" id="name-trajectories">点击选择文件…</span>
             <input type="file" id="trajectories" accept=".jsonl">
+            <button type="button" class="slot-clear" id="clear-trajectories" aria-label="取消选择">✕</button>
           </label>
           <button id="btn-ingest">📥 入库</button>
+          <button id="db-switch-btn" class="menu-btn menu-switch" type="button">🔀 切换</button>
+          <button id="db-new" class="menu-btn menu-new" type="button">＋ 新建</button>
+          <button id="db-clear" class="menu-btn menu-clear" type="button">🗑 清空</button>
           <!-- 旧单次检分入口：保留 DOM（现有 app.js 绑定依赖），双模式下隐藏 -->
           <button id="run" style="display:none">▶ 运行</button>
         </div>
       </div>
-      <div id="stats-bar" class="stats-bar"></div>
+      <div class="db-info-row">
+        <div id="stats-bar" class="stats-bar"></div>
+        <div id="manifest-summary" class="manifest"></div>
+      </div>
     </div>
-    <div id="manifest-summary" class="manifest"></div>
   </header>
 
   <div id="dedup-banner" class="dedup-banner hidden"></div>
@@ -98,6 +105,40 @@
     </div>
   </div>
 
-  <script src="/app.js"></script>
+  <div id="newdb-modal" class="modal-overlay hidden">
+    <div class="modal newdb-modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <span>新建库</span>
+        <button id="newdb-close" class="modal-close" aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="newdb-hint">输入新库文件名（如 <code>demo.db</code>）或完整路径。相对名将建在当前库同目录。</p>
+        <input type="text" id="newdb-path" class="newdb-input" placeholder="demo.db" />
+        <div class="newdb-actions">
+          <button id="newdb-cancel" class="db-btn" type="button">取消</button>
+          <button id="newdb-confirm" class="db-btn db-primary" type="button">新建并切换</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="switch-modal" class="modal-overlay hidden">
+    <div class="modal newdb-modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <span>切换库</span>
+        <button id="switch-close" class="modal-close" aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="newdb-hint">选择要切换到的库（当前库已标记）。</p>
+        <select id="switch-select" class="switch-select"></select>
+        <div class="newdb-actions">
+          <button id="switch-cancel" class="db-btn" type="button">取消</button>
+          <button id="switch-confirm" class="db-btn db-primary" type="button">确定切换</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js?v=7"></script>
 </body>
 </html>

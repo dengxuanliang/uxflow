@@ -241,8 +241,9 @@ async def run_pipeline(
         # default-config convenience branch needs these.
         from module3.selection import SelectionConfig
         from module3.compose import GeneralDataConfig
+        _n_unique = len({(c.trajectory_id, c.slice_index) for c in scored})
         selection_config = selection_config or SelectionConfig(
-            n=min(10, max(1, len(scored))), min_per_problem=1
+            n=min(10, max(1, _n_unique)), min_per_problem=1
         )
         general_config = general_config or GeneralDataConfig(ratio=0.3, source_path=None)
 
@@ -312,8 +313,9 @@ async def run_search(
     if selection_config is None or general_config is None:
         from module3.selection import SelectionConfig
         from module3.compose import GeneralDataConfig
+        _n_unique = len({(c.trajectory_id, c.slice_index) for c in scored})
         selection_config = selection_config or SelectionConfig(
-            n=min(10, max(1, len(scored))), min_per_problem=1)
+            n=min(10, max(1, _n_unique)), min_per_problem=1)
         general_config = general_config or GeneralDataConfig(ratio=0.3, source_path=None)
     select_result = deps.select_fn(
         scored, sub_problem_ids=all_sub_ids,

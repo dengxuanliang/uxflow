@@ -7,6 +7,7 @@ Usage:
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 dengxuanliang
 
+import asyncio
 import os
 import pathlib
 
@@ -22,14 +23,10 @@ from module0 import QueryCompiler, Taxonomy  # noqa: E402
 from module0.embedding import EmbeddingModel  # noqa: E402
 from module1.pipeline import TrajectoryPipeline, PipelineConfig  # noqa: E402
 from module1.loader import load_trajectories  # noqa: E402
-from module1.sqlite_store import SqliteSliceStore  # noqa: E402
+from module1.index import MemoryIndex  # noqa: E402
 from module3.pipeline import select_final_dataset  # noqa: E402
 from service import create_app, MemoryRunStore, PipelineDeps  # noqa: E402
-from service.stores import (  # noqa: E402
-    SqliteProblemStore,
-    SqliteTrajectoryStore,
-    SqliteJudgeCache,
-)
+from service.database import DatabaseManager  # noqa: E402
 from uxflow_paths import resolve_db_path, ensure_parent  # noqa: E402
 
 
@@ -51,9 +48,6 @@ def build_app():
     # Persistent SQLite backend (path from --db > UXFLOW_DB env > XDG data dir).
     db = resolve_db_path()
     ensure_parent(db)
-    # One long-lived slice store: search must recall against the already-ingested
-    # slice index, so the same instance must persist across runs.
-    slice_store = SqliteSliceStore(db)
 
     gw_config = GatewayConfig(
         litellm_base=os.environ.get("LITELLM_BASE", "http://localhost:4000/v1"),
@@ -66,27 +60,34 @@ def build_app():
         gateway=gateway, taxonomy=taxonomy, model=compile_model, embedding_model=emb)
     cfg = PipelineConfig(
         judge_model=judge_model, recall_top_n=20, min_confidence=0.7, embedding_model=emb)
-    # store_factory returns the SAME persistent slice_store singleton on every
-    # call (not a fresh MemoryIndex): search recalls against the already-ingested,
-    # persisted slice index — a per-call `new` would throw that index away.
+    # store_factory 的鸡生蛋问题：TrajectoryPipeline.__init__ 会立即调一次 store_factory()
+    # 来设 self._store，但此刻 DatabaseManager 还不存在（它的构造要先拿到 pipeline 对象）。
+    # 所以先用一个廉价的 MemoryIndex 占位 bootstrap（不开真 SQLite 连接、无遗留句柄），
+    # 待 manager 构造后（它就地把 pipeline._store 换成真 slice_store），再把 factory 重指向
+    # manager.slice_store —— 热切库后 factory 自然返回新库实例，且复用已入库的持久 slice 索引。
     pipeline = TrajectoryPipeline(
-        config=cfg, gateway=gateway, store_factory=lambda: slice_store)
-
+        config=cfg, gateway=gateway,
+        store_factory=MemoryIndex)   # throwaway bootstrap，下方 manager 构造后被替换
     deps = PipelineDeps(
         compiler=compiler,
         pipeline=pipeline,
         select_fn=select_final_dataset,
         load_trajectories_fn=load_trajectories,
-        problem_store=SqliteProblemStore(db),
-        trajectory_store=SqliteTrajectoryStore(db),
-        judge_cache=SqliteJudgeCache(db),
+        problem_store=None,
+        trajectory_store=None,
+        judge_cache=None,
         embedder=emb,
     )
+    # manager 就地装配 deps 的三个 store + pipeline._store + 自己的 slice_store。
+    # run_lock 此处是 bootstrap 占位，create_app 建真锁后经 attach_lock 替换（见下）。
+    mgr = DatabaseManager(db, deps, pipeline, run_lock=asyncio.Semaphore(1))
+    pipeline._store_factory = lambda: mgr.slice_store
 
     store = MemoryRunStore()
     tau_q = float(os.environ.get("UXFLOW_QUESTION_DEDUP_THRESHOLD", "0.90"))
     # run_fn/search_fn/ingest_fn default inside create_app (run_pipeline etc.).
-    app = create_app(store=store, deps=deps, tau_q=tau_q)
+    # create_app 建真锁后调用 mgr.attach_lock 替换掉上面的 bootstrap Semaphore。
+    app = create_app(store=store, deps=deps, tau_q=tau_q, db_manager=mgr)
 
     @app.on_event("startup")
     async def _open_gateway():

@@ -40,9 +40,10 @@ def deduplicate(
     cosine_threshold: float = 0.95,
     minhash_threshold: float = 0.9,
 ) -> list[Any]:
-    """Collapse duplicate candidates, keeping highest relevance per group."""
+    """Collapse near-duplicate MergedCandidates, absorbing attribution into survivor."""
     if not candidates:
         return []
+    from module3.merge import absorb
 
     ordered = sorted(candidates, key=lambda c: c.relevance_score, reverse=True)
     kept: list[Any] = []
@@ -52,20 +53,18 @@ def deduplicate(
     for candidate in ordered:
         vec = np.asarray(candidate.embedding, dtype=np.float32)
         minhash = _minhash(_tokens_of(candidate))
-        cosine_duplicate = any(
-            candidate.sub_problem_id == kept_candidate.sub_problem_id
-            and _cosine(vec, kept_vec) > cosine_threshold
-            for kept_candidate, kept_vec in zip(kept, kept_vectors)
-        )
-        token_duplicate = any(
-            candidate.sub_problem_id == kept_candidate.sub_problem_id
-            and
-            minhash is not None
-            and existing is not None
-            and minhash.jaccard(existing) >= minhash_threshold
-            for kept_candidate, existing in zip(kept, kept_minhashes)
-        )
-        if cosine_duplicate or token_duplicate:
+        dup_of = None
+        for i, kv in enumerate(kept_vectors):
+            if _cosine(vec, kv) > cosine_threshold:
+                dup_of = i
+                break
+            existing = kept_minhashes[i]
+            if (minhash is not None and existing is not None
+                    and minhash.jaccard(existing) >= minhash_threshold):
+                dup_of = i
+                break
+        if dup_of is not None:
+            absorb(kept[dup_of], candidate)   # 吸收归属/掩码，保覆盖
             continue
         kept.append(candidate)
         kept_vectors.append(vec)

@@ -50,6 +50,7 @@ let state = {
   compileTotal: 0,
   stopping: false,
   runGen: 0,                 // per-run generation token; isolates stop/rerun races
+  currentDbName: null,       // basename of the current DB, for the stats line
 };
 
 $("run").addEventListener("click", startRun);
@@ -70,6 +71,18 @@ for (const [id, slot, empty] of [
     const f = e.target.files[0];
     $("name-" + id).textContent = f ? f.name : empty;
     $(slot).classList.toggle("filled", !!f);
+  });
+}
+
+// ✕ 取消误选：清空该槽，阻止冒泡到 <label>（否则会重新打开文件选择框）。
+for (const [clearId, inputId] of [
+  ["clear-manifest", "manifest"],
+  ["clear-trajectories", "trajectories"],
+]) {
+  $(clearId).addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    clearFileSlot(inputId);
   });
 }
 
@@ -211,16 +224,17 @@ async function startIngest() {
   subscribeEvents(run_id);
 }
 
+// 清空单个文件槽：input 值、名字占位、filled 状态。
+function clearFileSlot(id) {
+  $(id).value = "";
+  $("name-" + id).textContent = "点击选择文件…";
+  $("slot-" + id).classList.remove("filled");
+}
+
 // Reset both ingest file inputs + their slot chips after a submit.
 function clearIngestInputs() {
-  for (const [id, slot, empty] of [
-    ["manifest", "slot-manifest", "点击选择文件…"],
-    ["trajectories", "slot-trajectories", "点击选择文件…"],
-  ]) {
-    $(id).value = "";
-    $("name-" + id).textContent = empty;
-    $(slot).classList.remove("filled");
-  }
+  clearFileSlot("manifest");
+  clearFileSlot("trajectories");
 }
 
 // ── Stats bar (GET /stats) ────────────────────────────────────────
@@ -229,8 +243,9 @@ async function loadStats() {
     const resp = await fetch("/stats");
     if (!resp.ok) return;
     const s = await resp.json();
+    const dbName = state.currentDbName || "当前库";
     $("stats-bar").textContent =
-      `库中 ${s.problems} 问题 · ${s.trajectories} 轨迹 · ${s.signatures} 切片`;
+      `【${dbName}】中 ${s.problems} 问题 · ${s.trajectories} 轨迹 · ${s.signatures} 切片`;
   } catch (_) { /* stats are best-effort */ }
 }
 
@@ -245,6 +260,95 @@ function showDedupBanner(dedup) {
   el.classList.remove("hidden");
 }
 function hideDedupBanner() { $("dedup-banner").classList.add("hidden"); }
+
+// ── 库管理（spec §7）───────────────────────────────────
+async function loadDatabases() {
+  try {
+    const resp = await fetch("/databases");
+    if (!resp.ok) return;
+    const { current, databases } = await resp.json();
+    state.currentDbName = (current || "").split("/").pop() || "当前库";
+    const sel = $("switch-select");
+    sel.innerHTML = "";
+    for (const d of databases) {
+      const opt = document.createElement("option");
+      opt.value = d.name;   // 文件名：后端 switch 按 current().parent 解析
+      const cnt = d.problems == null ? "?" : d.problems;
+      opt.textContent = `${d.name}（${cnt} 问题）` + (d.is_current ? " · 当前" : "");
+      if (d.is_current) opt.selected = true;
+      sel.appendChild(opt);
+    }
+    loadStats();   // 库名可能已更新，刷新信息行
+  } catch (_) { /* best-effort */ }
+}
+
+async function switchDatabase(path) {
+  if (!path) return false;
+  let resp;
+  try {
+    resp = await fetch("/databases/switch", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+  } catch (err) {
+    alert("切换失败: " + (err.message || err));
+    loadDatabases();   // resync dropdown to actual backend state
+    return false;
+  }
+  if (resp.status === 409) { alert("有任务运行中，无法切换库"); loadDatabases(); return false; }
+  if (!resp.ok) { alert("切换失败: HTTP " + resp.status); loadDatabases(); return false; }
+  afterDbChange();
+  return true;
+}
+
+// 切换库弹窗：复用 .modal 样式，从下拉选库后走 switch。
+function openSwitchModal() { $("switch-modal").classList.remove("hidden"); }
+function closeSwitchModal() { $("switch-modal").classList.add("hidden"); }
+
+async function confirmSwitch() {
+  const p = $("switch-select").value;
+  if (!p) { return; }
+  const ok = await switchDatabase(p);
+  if (ok) closeSwitchModal();   // 成功关弹窗；失败 switchDatabase 已 alert，弹窗留着
+}
+
+async function clearDatabase() {
+  if (!confirm("将永久删除当前库文件，不可恢复，确认？")) return;
+  let resp;
+  try {
+    resp = await fetch("/databases/clear", { method: "POST" });
+  } catch (err) {
+    alert("清除失败: " + (err.message || err));
+    return;
+  }
+  if (resp.status === 409) { alert("有任务运行中，无法清除库"); return; }
+  if (!resp.ok) { alert("清除失败: HTTP " + resp.status); return; }
+  afterDbChange();
+}
+
+// 新建库弹窗：复用 .modal 样式，输入路径后走 switch（后端切到不存在路径=新建空库）。
+function openNewDbModal() {
+  $("newdb-path").value = "";
+  $("newdb-modal").classList.remove("hidden");
+  $("newdb-path").focus();
+}
+function closeNewDbModal() { $("newdb-modal").classList.add("hidden"); }
+
+async function confirmNewDb() {
+  const p = $("newdb-path").value.trim();
+  if (!p) { $("newdb-path").focus(); return; }
+  // 复用切换；不存在路径→后端建空库并切换。仅成功时关弹窗，失败保留输入供重试。
+  const ok = await switchDatabase(p);
+  if (ok) closeNewDbModal();
+}
+
+function afterDbChange() {
+  $("workspace").classList.add("hidden");
+  hideDedupBanner();
+  state.view = null;
+  state.trajCache = {};
+  loadDatabases();   // 内部会刷新 currentDbName 后再 loadStats()，避免旧库名配新计数的闪烁
+}
 
 function resetRunState() {
   state.view = null;
@@ -526,19 +630,21 @@ function renderHits() {
     hd.className = "hit" + (isActive ? " active" : "");
     const badge = h.selected ? '<span class="selected-badge">已入选</span>' : "";
     hd.innerHTML =
-      `<span><span class="hit-id">${escapeHtml(h.trajectory_id)}</span>` +
+      `<span class="hit-main"><span class="hit-id">${escapeHtml(h.trajectory_id)}</span>` +
       `<span class="hit-seg"> · slice${h.slice_index} · ${h.caps.length}片段</span></span>${badge}`;
-    // 可回溯性(PR-3):judge 定位的决定性证据步 + 命中的 rubric 判据。
-    if (h.evidence_step != null || (h.criteria_hit && h.criteria_hit.length)) {
-      const ev = document.createElement("div");
-      ev.className = "hit-evidence";
-      const parts = [];
-      if (h.evidence_step != null) parts.push(`⭐ 决定性证据: step ${h.evidence_step}`);
-      if (h.criteria_hit && h.criteria_hit.length) {
-        parts.push(`命中判据: ${h.criteria_hit.map(escapeHtml).join(" / ")}`);
-      }
-      ev.innerHTML = parts.join(" · ");
-      hd.appendChild(ev);
+    // 证据：点击弹小窗（复用详情 modal），不再就地展开。
+    const hasEvidence = h.evidence_step != null
+      || (h.criteria_hit && h.criteria_hit.length);
+    if (hasEvidence) {
+      const btn = document.createElement("button");
+      btn.className = "evidence-toggle";
+      btn.type = "button";
+      btn.textContent = "证据";
+      btn.onclick = (e) => {
+        e.stopPropagation();   // 不触发 selectTrajectory
+        openEvidenceModal(h);
+      };
+      hd.appendChild(btn);
     }
     hd.onclick = () => selectTrajectory(h);
     el.appendChild(hd);
@@ -764,6 +870,29 @@ function openCompileModal(p) {
   $("compile-modal").classList.remove("hidden");
 }
 
+// 证据弹窗：复用 #compile-modal 容器（同一时刻只开一个弹窗）。
+function openEvidenceModal(h) {
+  const rows = [];
+  const row = (label, html) => rows.push(
+    `<div class="mf-row"><div class="mf-k">${label}</div><div class="mf-v">${html}</div></div>`);
+
+  if (h.evidence_step != null) {
+    row("决定性证据", `<span class="mf-num">⭐ step ${h.evidence_step}</span>`);
+  }
+  if (h.criteria_hit && h.criteria_hit.length) {
+    row("命中判据", h.criteria_hit.map(escapeHtml).join(" / "));
+  }
+  const caps = (h.caps || []).map((c) =>
+    // c.color 来自后端 assign_colors 固定调色板（非用户输入），直接插入 style 安全。
+    `<span class="ev-cap" style="background:${c.color}">${escapeHtml(c.label)}</span>`
+  ).join("");
+  if (caps) row("覆盖能力", caps);
+
+  $("modal-title").textContent = `决定性证据 · ${h.trajectory_id}`;
+  $("modal-body").innerHTML = rows.join("");
+  $("compile-modal").classList.remove("hidden");
+}
+
 function closeCompileModal() {
   $("compile-modal").classList.add("hidden");
 }
@@ -773,8 +902,31 @@ $("compile-modal").addEventListener("click", (e) => {
   if (e.target.id === "compile-modal") closeCompileModal();  // click backdrop
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeCompileModal();
+  if (e.key === "Escape") { closeCompileModal(); closeNewDbModal(); closeSwitchModal(); }
 });
 
-// initial stats-bar populate
+// 库控件事件绑定
+$("db-switch-btn").addEventListener("click", openSwitchModal);
+$("db-new").addEventListener("click", openNewDbModal);
+$("db-clear").addEventListener("click", clearDatabase);
+// 切换弹窗
+$("switch-close").addEventListener("click", closeSwitchModal);
+$("switch-cancel").addEventListener("click", closeSwitchModal);
+$("switch-confirm").addEventListener("click", confirmSwitch);
+$("switch-modal").addEventListener("click", (e) => {
+  if (e.target.id === "switch-modal") closeSwitchModal();
+});
+// 新建弹窗（保留）
+$("newdb-close").addEventListener("click", closeNewDbModal);
+$("newdb-cancel").addEventListener("click", closeNewDbModal);
+$("newdb-confirm").addEventListener("click", confirmNewDb);
+$("newdb-modal").addEventListener("click", (e) => {
+  if (e.target.id === "newdb-modal") closeNewDbModal();   // 点背景关闭
+});
+$("newdb-path").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); confirmNewDb(); }
+});
+
+// initial stats-bar + 库列表 populate
 loadStats();
+loadDatabases();
