@@ -94,14 +94,21 @@ button#run:disabled { opacity: .5; cursor: not-allowed; }
 
 /* ── Dual-mode header: search / ingest / stats ──────── */
 .modes { display: flex; flex-direction: column; gap: 12px; }
-.mode-bar { display: flex; gap: 18px; align-items: center; flex-wrap: wrap; }
-.mode-divider { align-self: stretch; width: 1px; background: var(--border, #2a2a35); margin: 2px 0; }
+.mode-bar { display: flex; gap: 18px; align-items: stretch; flex-wrap: wrap; }
 .mode-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
-.mode-search { flex: 1 1 320px; }
-.mode-ingest { flex: 2 1 460px; }
+/* 左块：搜索，竖直排列，拉高与右块等高 */
+.mode-search {
+  flex: 1 1 300px; flex-direction: column; align-items: stretch; gap: 10px;
+  justify-content: center;
+}
+/* 右块：竖直两行 */
+.mode-right { display: flex; flex-direction: column; gap: 12px; flex: 2 1 460px; }
+.mode-ingest { flex: 0 0 auto; }
+.mode-dbops { flex: 0 0 auto; }
 
+/* 搜索输入框：吃满左块高度（flex-basis auto），最小 40px */
 .mode-search #question {
-  flex: 1; min-width: 180px; height: 40px; box-sizing: border-box;
+  flex: 1 1 auto; min-width: 180px; min-height: 40px; box-sizing: border-box;
   padding: 0 14px; font-size: 13px;
   font-family: var(--sans); color: var(--fg); background: #fff;
   border: 1px solid transparent; border-radius: 6px; outline: none;
@@ -122,6 +129,21 @@ button#btn-ingest { background: #1f883d; border: 1px solid #1a7f37; }
 button#btn-ingest:hover { background: #1a7f37; }
 button#btn-search:active, button#btn-ingest:active { transform: translateY(1px); }
 button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: not-allowed; }
+
+/* 库操作三按钮：与搜索/入库同尺寸（40px 高），三者等宽 */
+.menu-btn {
+  flex: 1 1 0; height: 40px; box-sizing: border-box;
+  padding: 0 16px; cursor: pointer; font-size: 13px; font-weight: 600;
+  color: #fff; border-radius: 6px; letter-spacing: .5px; white-space: nowrap;
+  transition: background .15s, transform .05s;
+}
+.menu-btn:active { transform: translateY(1px); }
+.menu-switch { background: var(--neon); border: 1px solid #0a5cc4; }
+.menu-switch:hover { background: #0a5cc4; }
+.menu-new { background: #1f883d; border: 1px solid #1a7f37; }
+.menu-new:hover { background: #1a7f37; }
+.menu-clear { background: var(--hot); border: 1px solid #a40e26; }
+.menu-clear:hover { background: #a40e26; }
 
 .stats-bar {
   color: #adbac7; font-family: var(--mono); font-size: 11px; letter-spacing: .3px;
@@ -409,23 +431,13 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
 .db-btn:hover { background: #fff; }
 .db-clear { color: var(--hot); border-color: var(--hot); }
 
-/* 主菜单切换组：输入框（含 datalist 候选）+ 框内 ✕ + 切换按钮 */
-.mode-switch { flex: 1 1 260px; }
-.switch-field { position: relative; display: flex; align-items: center; flex: 1; min-width: 160px; }
-.switch-field #db-switch-path {
-  flex: 1; min-width: 0; height: 40px; box-sizing: border-box;
-  padding: 0 28px 0 12px; font-size: 13px; font-family: var(--mono);
+/* 切换库弹窗内的下拉 */
+.switch-select {
+  width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 13px;
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px;
   color: var(--fg); background: #fff;
-  border: 1px solid transparent; border-radius: 6px; outline: none;
-  transition: box-shadow .15s;
 }
-.switch-field #db-switch-path:focus { box-shadow: 0 0 0 2px var(--neon-2); }
-.switch-field #db-switch-path::placeholder { color: var(--fg-faint); font-family: var(--sans); }
-/* 切换输入框内的 ✕：默认显示，空输入时隐藏（:placeholder-shown 兜底）。
-   用 .switch-field .switch-clear（特异性 0,2,0）压过基础 .slot-clear{display:none}（0,1,0）——
-   否则基础规则靠源序在后会把 ✕ 一直藏掉。空输入规则特异性 1,3,0 仍最高。 */
-.switch-field .switch-clear { display: block; right: 8px; }
-.switch-field #db-switch-path:placeholder-shown ~ .switch-clear { display: none; }
+.switch-select:focus { outline: none; border-color: var(--neon); box-shadow: 0 0 0 2px #0969da33; }
 
 /* 新建库弹窗：套用 .modal 规范，补输入区样式 */
 .newdb-modal { width: min(440px, 92vw); }

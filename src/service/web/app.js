@@ -267,17 +267,16 @@ async function loadDatabases() {
     const resp = await fetch("/databases");
     if (!resp.ok) return;
     const { current, databases } = await resp.json();
-    // 当前库文件名（纯文本，供库信息行显示）
     state.currentDbName = (current || "").split("/").pop() || "当前库";
-    const list = $("db-list");
-    list.innerHTML = "";
+    const sel = $("switch-select");
+    sel.innerHTML = "";
     for (const d of databases) {
       const opt = document.createElement("option");
-      // value 用文件名：后端 switch 对非绝对路径按 current().parent 解析，回指正确库
-      opt.value = d.name;
+      opt.value = d.name;   // 文件名：后端 switch 按 current().parent 解析
       const cnt = d.problems == null ? "?" : d.problems;
-      opt.label = `${cnt} 问题` + (d.is_current ? " · 当前" : "");
-      list.appendChild(opt);
+      opt.textContent = `${d.name}（${cnt} 问题）` + (d.is_current ? " · 当前" : "");
+      if (d.is_current) opt.selected = true;
+      sel.appendChild(opt);
     }
     loadStats();   // 库名可能已更新，刷新信息行
   } catch (_) { /* best-effort */ }
@@ -302,16 +301,15 @@ async function switchDatabase(path) {
   return true;
 }
 
-// 主菜单切换组：从输入框（可手输或选 datalist）取值切库。
-async function switchFromInput() {
-  const p = $("db-switch-path").value.trim();
-  if (!p) { $("db-switch-path").focus(); return; }
+// 切换库弹窗：复用 .modal 样式，从下拉选库后走 switch。
+function openSwitchModal() { $("switch-modal").classList.remove("hidden"); }
+function closeSwitchModal() { $("switch-modal").classList.add("hidden"); }
+
+async function confirmSwitch() {
+  const p = $("switch-select").value;
+  if (!p) { return; }
   const ok = await switchDatabase(p);
-  if (ok) $("db-switch-path").value = "";   // 成功后清空输入，失败保留供重试
-}
-function clearSwitchInput() {
-  $("db-switch-path").value = "";
-  $("db-switch-path").focus();
+  if (ok) closeSwitchModal();   // 成功关弹窗；失败 switchDatabase 已 alert，弹窗留着
 }
 
 async function clearDatabase() {
@@ -904,17 +902,21 @@ $("compile-modal").addEventListener("click", (e) => {
   if (e.target.id === "compile-modal") closeCompileModal();  // click backdrop
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeCompileModal(); closeNewDbModal(); }
+  if (e.key === "Escape") { closeCompileModal(); closeNewDbModal(); closeSwitchModal(); }
 });
 
 // 库控件事件绑定
-$("db-switch-btn").addEventListener("click", switchFromInput);
-$("db-switch-path").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") { e.preventDefault(); switchFromInput(); }
-});
-$("db-switch-clear").addEventListener("click", clearSwitchInput);
+$("db-switch-btn").addEventListener("click", openSwitchModal);
 $("db-new").addEventListener("click", openNewDbModal);
 $("db-clear").addEventListener("click", clearDatabase);
+// 切换弹窗
+$("switch-close").addEventListener("click", closeSwitchModal);
+$("switch-cancel").addEventListener("click", closeSwitchModal);
+$("switch-confirm").addEventListener("click", confirmSwitch);
+$("switch-modal").addEventListener("click", (e) => {
+  if (e.target.id === "switch-modal") closeSwitchModal();
+});
+// 新建弹窗（保留）
 $("newdb-close").addEventListener("click", closeNewDbModal);
 $("newdb-cancel").addEventListener("click", closeNewDbModal);
 $("newdb-confirm").addEventListener("click", confirmNewDb);
