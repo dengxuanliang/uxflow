@@ -119,8 +119,8 @@ button#btn-search, button#btn-ingest {
 }
 button#btn-search { background: #3B6EA8; border: 1px solid #325E8F; }
 button#btn-search:hover { background: #325E8F; }
-button#btn-ingest { background: #287F7A; border: 1px solid #216B67; }
-button#btn-ingest:hover { background: #216B67; }
+button#btn-ingest { background: #4E7F52; border: 1px solid #436E46; }
+button#btn-ingest:hover { background: #436E46; }
 button#btn-search:active, button#btn-ingest:active { transform: translateY(1px); }
 button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: not-allowed; }
 
@@ -132,8 +132,8 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   transition: background .15s, transform .05s;
 }
 .menu-btn:active { transform: translateY(1px); }
-.menu-switch { background: #4E7F52; border: 1px solid #436E46; }
-.menu-switch:hover { background: #436E46; }
+.menu-switch { background: #287F7A; border: 1px solid #216B67; }
+.menu-switch:hover { background: #216B67; }
 .menu-new { background: #6B5A9A; border: 1px solid #5B4D84; }
 .menu-new:hover { background: #5B4D84; }
 .menu-clear { background: #A34747; border: 1px solid #8C3C3C; }
