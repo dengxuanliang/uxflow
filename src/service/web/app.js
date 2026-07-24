@@ -620,7 +620,7 @@ function renderHits() {
     hd.className = "hit" + (isActive ? " active" : "");
     const badge = h.selected ? '<span class="selected-badge">已入选</span>' : "";
     hd.innerHTML =
-      `<span><span class="hit-id">${escapeHtml(h.trajectory_id)}</span>` +
+      `<span class="hit-main"><span class="hit-id">${escapeHtml(h.trajectory_id)}</span>` +
       `<span class="hit-seg"> · slice${h.slice_index} · ${h.caps.length}片段</span></span>${badge}`;
     // 证据：点击弹小窗（复用详情 modal），不再就地展开。
     const hasEvidence = h.evidence_step != null

@@ -278,6 +278,11 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   font-size: 8px; line-height: 1.2; background: #e7f7ee; color: var(--ok);
   border: 1px solid #b7e6cd; padding: 1px 4px; border-radius: 8px; letter-spacing: 0;
 }
+/* 左侧轨迹信息：可收缩，过长时省略号，避免挤压右侧徽标/证据按钮 */
+.hit .hit-main {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* trajectory detail steps */
 .step {
   padding: 7px 9px; margin: 5px 0; border-radius: 6px; white-space: pre-wrap;
@@ -370,9 +375,9 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
 
 /* ── 证据按钮（点击弹详情 modal，spec §6）──────────────── */
 .evidence-toggle {
-  margin-top: 4px;
+  flex: 0 0 auto; white-space: nowrap;
   font-size: 11px;
-  padding: 1px 8px;
+  padding: 2px 10px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: var(--bg-2);
