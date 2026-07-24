@@ -50,6 +50,7 @@ let state = {
   compileTotal: 0,
   stopping: false,
   runGen: 0,                 // per-run generation token; isolates stop/rerun races
+  currentDbName: null,       // basename of the current DB, for the stats line
 };
 
 $("run").addEventListener("click", startRun);
@@ -242,8 +243,9 @@ async function loadStats() {
     const resp = await fetch("/stats");
     if (!resp.ok) return;
     const s = await resp.json();
+    const dbName = state.currentDbName || "当前库";
     $("stats-bar").textContent =
-      `库中 ${s.problems} 问题 · ${s.trajectories} 轨迹 · ${s.signatures} 切片`;
+      `【${dbName}】中 ${s.problems} 问题 · ${s.trajectories} 轨迹 · ${s.signatures} 切片`;
   } catch (_) { /* stats are best-effort */ }
 }
 
@@ -264,22 +266,25 @@ async function loadDatabases() {
   try {
     const resp = await fetch("/databases");
     if (!resp.ok) { $("db-bar").classList.add("hidden"); return; }
-    const { databases } = await resp.json();
+    const { current, databases } = await resp.json();
+    // 当前库文件名（纯文本，供库信息行显示）
+    state.currentDbName = (current || "").split("/").pop() || "当前库";
     const sel = $("db-select");
     sel.innerHTML = "";
     for (const d of databases) {
       const opt = document.createElement("option");
       opt.value = d.path;
       const cnt = d.problems == null ? "?" : d.problems;
-      opt.textContent = `${d.name} (${cnt}问题)` + (d.is_current ? " · 当前" : "");
+      opt.textContent = `${d.name}（${cnt} 问题）` + (d.is_current ? " · 当前" : "");
       if (d.is_current) opt.selected = true;
       sel.appendChild(opt);
     }
+    loadStats();   // 库名可能已更新，刷新信息行
   } catch (_) { /* best-effort */ }
 }
 
 async function switchDatabase(path) {
-  if (!path) return;
+  if (!path) return false;
   let resp;
   try {
     resp = await fetch("/databases/switch", {
@@ -289,11 +294,12 @@ async function switchDatabase(path) {
   } catch (err) {
     alert("切换失败: " + (err.message || err));
     loadDatabases();   // resync dropdown to actual backend state
-    return;
+    return false;
   }
-  if (resp.status === 409) { alert("有任务运行中，无法切换库"); loadDatabases(); return; }
-  if (!resp.ok) { alert("切换失败: HTTP " + resp.status); loadDatabases(); return; }
+  if (resp.status === 409) { alert("有任务运行中，无法切换库"); loadDatabases(); return false; }
+  if (!resp.ok) { alert("切换失败: HTTP " + resp.status); loadDatabases(); return false; }
   afterDbChange();
+  return true;
 }
 
 async function clearDatabase() {
@@ -310,13 +316,28 @@ async function clearDatabase() {
   afterDbChange();
 }
 
+// 新建库弹窗：复用 .modal 样式，输入路径后走 switch（后端切到不存在路径=新建空库）。
+function openNewDbModal() {
+  $("newdb-path").value = "";
+  $("newdb-modal").classList.remove("hidden");
+  $("newdb-path").focus();
+}
+function closeNewDbModal() { $("newdb-modal").classList.add("hidden"); }
+
+async function confirmNewDb() {
+  const p = $("newdb-path").value.trim();
+  if (!p) { $("newdb-path").focus(); return; }
+  // 复用切换；不存在路径→后端建空库并切换。仅成功时关弹窗，失败保留输入供重试。
+  const ok = await switchDatabase(p);
+  if (ok) closeNewDbModal();
+}
+
 function afterDbChange() {
   $("workspace").classList.add("hidden");
   hideDedupBanner();
   state.view = null;
   state.trajCache = {};
-  loadStats();
-  loadDatabases();
+  loadDatabases();   // 内部会刷新 currentDbName 后再 loadStats()，避免旧库名配新计数的闪烁
 }
 
 function resetRunState() {
@@ -871,16 +892,22 @@ $("compile-modal").addEventListener("click", (e) => {
   if (e.target.id === "compile-modal") closeCompileModal();  // click backdrop
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeCompileModal();
+  if (e.key === "Escape") { closeCompileModal(); closeNewDbModal(); }
 });
 
 // 库控件事件绑定
 $("db-select").addEventListener("change", (e) => switchDatabase(e.target.value));
-$("db-switch").addEventListener("click", () => {
-  const p = $("db-new-path").value.trim();
-  if (p) switchDatabase(p);
-});
+$("db-new").addEventListener("click", openNewDbModal);
 $("db-clear").addEventListener("click", clearDatabase);
+$("newdb-close").addEventListener("click", closeNewDbModal);
+$("newdb-cancel").addEventListener("click", closeNewDbModal);
+$("newdb-confirm").addEventListener("click", confirmNewDb);
+$("newdb-modal").addEventListener("click", (e) => {
+  if (e.target.id === "newdb-modal") closeNewDbModal();   // 点背景关闭
+});
+$("newdb-path").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") { e.preventDefault(); confirmNewDb(); }
+});
 
 // initial stats-bar + 库列表 populate
 loadStats();

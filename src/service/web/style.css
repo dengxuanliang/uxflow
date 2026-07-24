@@ -401,7 +401,7 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   color: #fff;
 }
 .db-bar .db-label { opacity: .8; }
-.db-select, .db-new-path {
+.db-select {
   font-size: 12px;
   padding: 2px 6px;
   border-radius: 4px;
@@ -409,7 +409,6 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   background: rgba(255,255,255,.9);
   color: var(--fg);
 }
-.db-new-path { width: 180px; }
 .db-btn {
   font-size: 12px;
   padding: 2px 8px;
@@ -421,6 +420,19 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
 }
 .db-btn:hover { background: #fff; }
 .db-clear { color: var(--hot); border-color: var(--hot); }
+
+/* 新建库弹窗：套用 .modal 规范，补输入区样式 */
+.newdb-modal { width: min(440px, 92vw); }
+.newdb-hint { margin: 0 0 10px; font-size: 12px; color: var(--fg-dim); line-height: 1.5; }
+.newdb-hint code { font-family: var(--mono); background: var(--bg-2); padding: 0 4px; border-radius: 3px; }
+.newdb-input {
+  width: 100%; box-sizing: border-box; font-family: var(--mono); font-size: 13px;
+  padding: 7px 10px; border: 1px solid var(--line); border-radius: 6px; color: var(--fg);
+}
+.newdb-input:focus { outline: none; border-color: var(--neon); box-shadow: 0 0 0 2px #0969da33; }
+.newdb-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.db-primary { background: var(--neon); color: #fff; border-color: var(--neon); }
+.db-primary:hover { background: var(--neon-2); }
 
 /* 文件槽取消选择 ✕：框内右侧小图标，默认淡、悬停才明显 */
 .slot-clear {

@@ -39,10 +39,9 @@
         </div>
       </div>
       <div id="db-bar" class="db-bar">
-        <span class="db-label">库</span>
+        <span class="db-label">切换库</span>
         <select id="db-select" class="db-select"></select>
-        <input type="text" id="db-new-path" class="db-new-path" placeholder="新建/切换到路径…" />
-        <button id="db-switch" class="db-btn" type="button">切换</button>
+        <button id="db-new" class="db-btn" type="button">＋ 新建库</button>
         <button id="db-clear" class="db-btn db-clear" type="button">🗑 清空当前库</button>
       </div>
       <div class="db-info-row">
@@ -106,6 +105,23 @@
         <button id="modal-close" class="modal-close" aria-label="关闭">✕</button>
       </div>
       <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <div id="newdb-modal" class="modal-overlay hidden">
+    <div class="modal newdb-modal" role="dialog" aria-modal="true">
+      <div class="modal-head">
+        <span>新建库</span>
+        <button id="newdb-close" class="modal-close" aria-label="关闭">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="newdb-hint">输入新库文件名（如 <code>demo.db</code>）或完整路径。相对名将建在当前库同目录。</p>
+        <input type="text" id="newdb-path" class="newdb-input" placeholder="demo.db" />
+        <div class="newdb-actions">
+          <button id="newdb-cancel" class="db-btn" type="button">取消</button>
+          <button id="newdb-confirm" class="db-btn db-primary" type="button">新建并切换</button>
+        </div>
+      </div>
     </div>
   </div>
 
