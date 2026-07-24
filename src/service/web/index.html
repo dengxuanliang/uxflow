@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>uxflow · SWE 轨迹优选器</title>
-  <link rel="stylesheet" href="/style.css?v=2">
+  <link rel="stylesheet" href="/style.css?v=3">
 </head>
 <body>
   <header>
@@ -37,12 +37,21 @@
           <!-- 旧单次检分入口：保留 DOM（现有 app.js 绑定依赖），双模式下隐藏 -->
           <button id="run" style="display:none">▶ 运行</button>
         </div>
-      </div>
-      <div id="db-bar" class="db-bar">
-        <span class="db-label">切换库</span>
-        <select id="db-select" class="db-select"></select>
-        <button id="db-new" class="db-btn" type="button">＋ 新建库</button>
-        <button id="db-clear" class="db-btn db-clear" type="button">🗑 清空当前库</button>
+        <div class="mode-divider"></div>
+        <div class="mode-row mode-switch">
+          <div class="switch-field">
+            <input type="text" id="db-switch-path" list="db-list"
+                   placeholder="选择或输入库…" autocomplete="off" />
+            <datalist id="db-list"></datalist>
+            <button type="button" class="slot-clear switch-clear" id="db-switch-clear" aria-label="清空输入">✕</button>
+          </div>
+          <button id="db-switch-btn" class="db-btn">🔀 切换</button>
+        </div>
+        <div class="mode-divider"></div>
+        <div class="mode-row mode-dbops">
+          <button id="db-new" class="db-btn" type="button">＋ 新建库</button>
+          <button id="db-clear" class="db-btn db-clear" type="button">🗑 清空当前库</button>
+        </div>
       </div>
       <div class="db-info-row">
         <div id="stats-bar" class="stats-bar"></div>
@@ -125,6 +134,6 @@
     </div>
   </div>
 
-  <script src="/app.js?v=2"></script>
+  <script src="/app.js?v=3"></script>
 </body>
 </html>
