@@ -414,3 +414,16 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
 }
 .db-btn:hover { background: #fff; }
 .db-clear { color: var(--hot); border-color: var(--hot); }
+
+/* 文件槽取消选择 ✕：仅在已选文件（.filled）时显示，浅灰、悬停加深 */
+.slot-clear {
+  position: absolute; top: 50%; right: 8px; transform: translateY(-50%);
+  display: none; z-index: 1;
+  border: none; background: transparent; cursor: pointer;
+  color: var(--fg-faint); font-size: 13px; line-height: 1;
+  padding: 2px 4px; border-radius: 4px;
+}
+.file-slot.filled .slot-clear { display: block; }
+.slot-clear:hover { color: var(--hot); background: #cf222e14; }
+/* 已选文件时给名字右侧留出 ✕ 的空间，避免重叠 */
+.file-slot.filled .slot-name { padding-right: 20px; }

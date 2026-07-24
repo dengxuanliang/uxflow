@@ -73,6 +73,18 @@ for (const [id, slot, empty] of [
   });
 }
 
+// ✕ 取消误选：清空该槽，阻止冒泡到 <label>（否则会重新打开文件选择框）。
+for (const [clearId, inputId] of [
+  ["clear-manifest", "manifest"],
+  ["clear-trajectories", "trajectories"],
+]) {
+  $(clearId).addEventListener("click", (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    clearFileSlot(inputId);
+  });
+}
+
 // ── Run + progress ────────────────────────────────────────────────
 async function startRun() {
   const mf = $("manifest").files[0];
@@ -211,16 +223,17 @@ async function startIngest() {
   subscribeEvents(run_id);
 }
 
+// 清空单个文件槽：input 值、名字占位、filled 状态。
+function clearFileSlot(id) {
+  $(id).value = "";
+  $("name-" + id).textContent = "点击选择文件…";
+  $("slot-" + id).classList.remove("filled");
+}
+
 // Reset both ingest file inputs + their slot chips after a submit.
 function clearIngestInputs() {
-  for (const [id, slot, empty] of [
-    ["manifest", "slot-manifest", "点击选择文件…"],
-    ["trajectories", "slot-trajectories", "点击选择文件…"],
-  ]) {
-    $(id).value = "";
-    $("name-" + id).textContent = empty;
-    $(slot).classList.remove("filled");
-  }
+  clearFileSlot("manifest");
+  clearFileSlot("trajectories");
 }
 
 // ── Stats bar (GET /stats) ────────────────────────────────────────
