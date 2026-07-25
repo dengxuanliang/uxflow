@@ -16,7 +16,6 @@ dependencies = [
 
 [project.optional-dependencies]
 local-embed = ["sentence-transformers>=3.0", "torch>=2.0"]
-onnx-embed = ["onnxruntime>=1.17"]  # reserved: no OnnxEmbedder backend yet
 dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "python-dotenv", "ruff"]
 service = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
 

@@ -12,6 +12,10 @@ UXFlow is installed from source. We recommend [uv](https://github.com/astral-sh/
 uv sync --extra dev            # or: pip install -e ".[dev]"
 ```
 
+## Architecture
+
+For a module map and data-flow diagram, see [`docs/architecture.md`](docs/architecture.md). The module 0 ↔ module 1 contract is frozen in [`docs/superpowers/specs/interface-contract.md`](docs/superpowers/specs/interface-contract.md).
+
 ## Running tests
 
 Tests are split by whether they need the real embedding model, using the `requires_model` pytest marker.
