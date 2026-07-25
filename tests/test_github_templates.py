@@ -54,3 +54,22 @@ def test_issue_templates_have_valid_frontmatter():
 def test_issue_template_config_yaml_exists():
     cfg = ISSUE_DIR / "config.yml"
     assert cfg.is_file(), ".github/ISSUE_TEMPLATE/config.yml missing"
+
+
+def test_pull_request_template_exists():
+    prt = ROOT / ".github" / "PULL_REQUEST_TEMPLATE.md"
+    assert prt.is_file(), "PULL_REQUEST_TEMPLATE.md missing"
+    text = prt.read_text(encoding="utf-8")
+    assert "pytest" in text.lower() and "ruff" in text.lower()
+    assert text.lower().count("ruff") >= 2, (
+        "ruff should appear in both the EN and zh-CN checklist items")
+
+
+def test_pull_request_template_is_tracked_by_git():
+    import subprocess
+    result = subprocess.run(
+        ["git", "ls-files", ".github/PULL_REQUEST_TEMPLATE.md"],
+        cwd=ROOT, capture_output=True, text=True, check=True,
+    )
+    assert result.stdout.strip() == ".github/PULL_REQUEST_TEMPLATE.md", (
+        "PULL_REQUEST_TEMPLATE.md is not git-tracked — GitHub would silently ignore it")
