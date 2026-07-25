@@ -46,15 +46,21 @@ uv sync --extra local-embed           # or: pip install -e ".[local-embed]"
 cp .env.example .env
 ${EDITOR:-vi} .env                    # set LITELLM_BASE + LITELLM_KEY
 
-# 2. Run the end-to-end smoke on bundled fixtures (needs LLM only, no torch):
+# 2. Add the local embedding backend (the smoke + Inspector use the local
+#    Qwen3-Embedding model; first run downloads it once):
+uv sync --extra local-embed
+
+# 3. Run the end-to-end smoke on bundled fixtures:
 uv run python scripts/e2e_smoke.py "写入py文件有语法错误"
 
-# 3. Or start the Inspector web UI:
+# 4. Or start the Inspector web UI:
 uv run python scripts/inspector_serve.py
 #    then open http://127.0.0.1:8000
 ```
 
 The smoke script loads `fixtures/taxonomy_v0.json` + `fixtures/trajectories/sample_01.jsonl`, runs module 0 → 1 → 2 → 3 → 0.5 end-to-end, and prints intermediate results at each stage for human inspection.
+
+> **Embedding:** the smoke and Inspector default to `LocalEmbedder` (local Qwen). The `Embedder` protocol is pluggable (Fake / Local / API — see [Embedding backends](#embedding-backends) below), but these two scripts don't yet expose a switch, so running them without `local-embed` requires editing the script (see #8).
 
 ## Embedding backends
 

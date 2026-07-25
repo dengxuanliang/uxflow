@@ -46,15 +46,21 @@ uv sync --extra local-embed           # 或:pip install -e ".[local-embed]"
 cp .env.example .env
 ${EDITOR:-vi} .env                    # 设置 LITELLM_BASE + LITELLM_KEY
 
-# 2. 在捆绑的 fixtures 上跑端到端 smoke(只需 LLM,无需 torch):
+# 2. 安装本地嵌入后端(smoke + Inspector 用本地 Qwen3-Embedding 模型;
+#    首次运行会下载一次):
+uv sync --extra local-embed
+
+# 3. 在捆绑的 fixtures 上跑端到端 smoke:
 uv run python scripts/e2e_smoke.py "写入py文件有语法错误"
 
-# 3. 或启动 Inspector web UI:
+# 4. 或启动 Inspector web UI:
 uv run python scripts/inspector_serve.py
 #    然后打开 http://127.0.0.1:8000
 ```
 
 该 smoke 脚本加载 `fixtures/taxonomy_v0.json` + `fixtures/trajectories/sample_01.jsonl`,端到端运行 module 0 → 1 → 2 → 3 → 0.5,并在每个阶段打印中间结果供人工检查。
+
+> **嵌入:** smoke 和 Inspector 默认用 `LocalEmbedder`(本地 Qwen)。`Embedder` 协议可插拔(Fake / Local / API — 见下文 [嵌入后端](#嵌入后端)),但这两个脚本目前没暴露开关,所以不装 `local-embed` 跑它们需要改脚本(见 #8)。
 
 ## 嵌入后端
 

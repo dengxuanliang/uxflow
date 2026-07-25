@@ -17,6 +17,11 @@ def test_readme_mentions_service_extra_and_inspector():
             f"{readme.name} must show how to start the Inspector")
         assert "Quickstart" in text or "快速上手" in text, (
             f"{readme.name} missing Quickstart section")
+        # The smoke + Inspector use the local Qwen embedder (needs torch);
+        # guard against the false "no torch" claim regressing (see #8).
+        assert "no torch" not in text, (
+            f"{readme.name} must not claim the Quickstart needs no torch "
+            "(the smoke + Inspector use LocalEmbedder)")
 
 
 def test_readme_stage_list_includes_module0_5():
