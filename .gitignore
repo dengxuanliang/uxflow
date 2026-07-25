@@ -24,3 +24,6 @@ docs/architecture-uml.md
 
 # Large binary tool (re-downloadable from plantuml.com)
 plantuml.jar
+
+# Local git worktrees (subagent-driven development)
+.worktrees/
