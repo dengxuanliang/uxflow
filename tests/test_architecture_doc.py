@@ -9,7 +9,7 @@ ARCH_DOC = ROOT / "docs" / "architecture.md"
 
 EXPECTED_MODULES = (
     "module0", "module1", "module2", "module3",
-    "module0_5", "llm_gateway", "uxflow_embed", "service", "uxflow_paths",
+    "module0_5", "llm_gateway", "uxflow_embed", "service",
 )
 
 

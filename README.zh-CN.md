@@ -12,7 +12,7 @@ UXFlow 通过筛选高质量的 SWE agent 轨迹切片来治理 SFT(监督微调
 - **module1** —— 召回 + 评判(切片、签名、索引轨迹;按子问题 RRF 召回 + LLM 评判)
 - **module2** —— 相关性重排(对召回切片按各子问题做 soft-score)
 - **module3** —— 去重 + 子模选择(跨问题去重、覆盖优化的最终挑选)
-- **module0_5** —— 标签自演化(向共享 taxonomy 提议/回填新的能力标签;CLI:`uxflow-evolve`)
+- **module0_5** —— 标签自演化(向共享 taxonomy 提议/回填新的能力标签)
 
 `llm_gateway` 提供各阶段共用的自适应 LLM 调用网关;`uxflow_embed` 以可插拔方式支撑嵌入(Fake / 本地 Qwen / API)。可选的 `service` 包通过 FastAPI Inspector UI 暴露同一条流水线。模块地图与数据流参见 [`docs/architecture.md`](docs/architecture.md)。
 
@@ -55,10 +55,6 @@ uv run python scripts/inspector_serve.py
 ```
 
 该 smoke 脚本加载 `fixtures/taxonomy_v0.json` + `fixtures/trajectories/sample_01.jsonl`,端到端运行 module 0 → 1 → 2 → 3 → 0.5,并在每个阶段打印中间结果供人工检查。
-
-## 数据目录
-
-module 0.5(标签自演化)持久化到单个 SQLite 文件。默认位置遵循 XDG 规范:`~/.local/share/uxflow/uxflow.db`。可用 `UXFLOW_DB` 环境变量或 `uxflow-evolve` 的 `--db` 参数覆盖。该数据库从不纳入 git。
 
 ## 嵌入后端
 

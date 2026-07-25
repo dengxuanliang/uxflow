@@ -24,8 +24,6 @@ def test_readme_stage_list_includes_module0_5():
         text = readme.read_text(encoding="utf-8")
         assert "module0_5" in text or "module 0.5" in text.lower(), (
             f"{readme.name} missing module0_5 in stage list")
-        assert "uxflow-evolve" in text, (
-            f"{readme.name} missing uxflow-evolve CLI mention")
 
 
 def test_readme_docs_link_targets_architecture_md():

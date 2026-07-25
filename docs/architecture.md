@@ -11,10 +11,9 @@ Public overview for contributors and cloners. For the frozen module 0 ↔ module
 | `module1` | Trajectory pipeline. Slices trajectories, builds free-layer signatures, RRF-recalls per sub-problem, LLM-judges. | `TrajectoryPipeline`, `PipelineConfig`, `Signature` |
 | `module2` | Relevance rerank. Soft-scores recalled slices against each sub-problem (BM25 + vector + judge signals). | scored candidates |
 | `module3` | Dedup + submodular selection. Cross-problem dedup, then coverage-optimized final pick with a general-data ratio. | `select_final_dataset`, `SelectionConfig` |
-| `module0_5` | Label self-evolution. Proposes new capability labels from module0 output, dedups against the taxonomy, backfills via real judging, persists to SQLite. CLI: `uxflow-evolve`. | `ingest_proposal`, `run_backfill`, `SqliteTaxonomyStore` |
+| `module0_5` | Label self-evolution. Proposes new capability labels from module0 output, dedups against the taxonomy, backfills via real judging. In-memory library (no persistence on this version). | `ingest_proposal`, `run_backfill`, `rerank_with_inheritance` |
 | `uxflow_embed` | Pluggable `Embedder` protocol: `FakeEmbedder`, `LocalEmbedder` (Qwen, needs `local-embed` extra), `ApiEmbedder`. | `Embedder` |
 | `service` | Optional FastAPI Inspector UI. Exposes run / search / ingest / cancel / SSE events over the same pipeline. Web frontend in `service/web/`. | `create_app`, `MemoryRunStore`, `PipelineDeps` |
-| `uxflow_paths` | Resolves the SQLite DB path: `--db` > `UXFLOW_DB` env > XDG data dir. | `resolve_db_path` |
 
 ## Data flow
 
@@ -33,7 +32,7 @@ module0 ── ProblemSpec ──┐
    │                     ▼
    │                  module3 (dedup + submodular pick) ── final SFT dataset
    │
-   └── (module0_5 back-loop) ── label proposals ──► taxonomy (SQLite)
+   └── (module0_5 back-loop) ── label proposals ──► shared taxonomy
                                        ▲
                                        │
                             run_backfill (real judge)
@@ -47,7 +46,6 @@ module0 ── ProblemSpec ──┐
 
 - `scripts/e2e_smoke.py` — end-to-end smoke on bundled fixtures (module 0 → 3 → 0.5).
 - `scripts/inspector_serve.py` — launch the Inspector web UI on `127.0.0.1:8000`.
-- `uxflow-evolve` (installed console script → `scripts/uxflow_evolve.py`) — module0.5 label evolution CLI.
 
 ## Configuration
 

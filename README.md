@@ -12,7 +12,7 @@ UXFlow curates SFT (supervised fine-tuning) training data by selecting high-qual
 - **module1** — recall + judge (slice, sign, index trajectories; RRF recall + LLM judging per sub-problem)
 - **module2** — relevance rerank (soft-score recalled slices against each sub-problem)
 - **module3** — dedup + submodular selection (cross-problem dedup, coverage-optimized final pick)
-- **module0_5** — label self-evolution (proposes/backfills new capability labels into the shared taxonomy; CLI: `uxflow-evolve`)
+- **module0_5** — label self-evolution (proposes/backfills new capability labels into the shared taxonomy)
 
 `llm_gateway` provides the adaptive LLM call gateway used across stages; `uxflow_embed` pluggably backs embedding (Fake / Local Qwen / API). The optional `service` package exposes the same pipeline over a FastAPI Inspector UI. See [`docs/architecture.md`](docs/architecture.md) for the module map and data flow.
 
@@ -55,10 +55,6 @@ uv run python scripts/inspector_serve.py
 ```
 
 The smoke script loads `fixtures/taxonomy_v0.json` + `fixtures/trajectories/sample_01.jsonl`, runs module 0 → 1 → 2 → 3 → 0.5 end-to-end, and prints intermediate results at each stage for human inspection.
-
-## Data directory
-
-Module 0.5 (label self-evolution) persists to a single SQLite file. The default location follows the XDG spec: `~/.local/share/uxflow/uxflow.db`. Override it with the `UXFLOW_DB` environment variable or the `--db` flag of `uxflow-evolve`. The database is never tracked by git.
 
 ## Embedding backends
 
