@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & discussions / 问答讨论
+    url: https://github.com/dengxuanliang/uxflow/discussions
+    about: Use Discussions for usage questions that aren't bugs or feature requests. / 非 bug、非功能请求的使用问题请走 Discussions。

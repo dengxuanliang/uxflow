@@ -12,6 +12,10 @@ UXFlow 从源码安装。推荐使用 [uv](https://github.com/astral-sh/uv)。
 uv sync --extra dev            # or: pip install -e ".[dev]"
 ```
 
+## 架构
+
+模块地图与数据流图见 [`docs/architecture.md`](docs/architecture.md)。模块 0 ↔ 模块 1 的接口契约冻结于 [`docs/superpowers/specs/interface-contract.md`](docs/superpowers/specs/interface-contract.md)。
+
 ## 运行测试
 
 测试通过 `requires_model` 这个 pytest marker,按是否需要真实嵌入模型进行划分。
