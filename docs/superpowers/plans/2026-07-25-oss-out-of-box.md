@@ -840,12 +840,14 @@ dev = ["pytest>=7.0", "pytest-asyncio>=0.23", "python-dotenv", "ruff"]
 service = ["fastapi>=0.110", "uvicorn>=0.29", "python-multipart>=0.0.9"]
 ```
 
-- [ ] **Step 4: Re-sync and run full guard suite + ruff + pytest**
+- [ ] **Step 4: Regenerate lock and run full guard suite + ruff + pytest**
 
-Run: `uv sync --extra dev --extra service`
+Run: `uv lock`                          # regenerate uv.lock to drop onnx-embed (lock-only; does NOT touch .venv)
 Run: `uv run ruff check`
 Run: `uv run pytest -m "not requires_model" -q`
 Expected: all green; `tests/test_pyproject_extras.py` fully passes.
+
+**DO NOT run `uv sync --extra dev --extra service` here.** `uv sync` synchronizes the .venv to *exactly* the requested extras set and will physically remove any packages from extras you didn't list (e.g. it would uninstall `torch` / `sentence-transformers` if `local-embed` was previously installed). Use `uv lock` (rewrites `uv.lock` only, leaves `.venv/` untouched) + `uv run` (uses the existing `.venv/` as-is) to verify the change without clobbering the contributor's venv state. If you genuinely need to realign the venv to a specific extras set, do it as a separate, explicit step with all relevant extras listed: `uv sync --extra dev --extra service --extra local-embed`.
 
 - [ ] **Step 5: Commit**
 
