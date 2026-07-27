@@ -78,9 +78,22 @@ def ingest_proposal(
     dedup_threshold: float = 0.85,
     mount_threshold: float = 0.50,
 ) -> ProposalResolution:
-    """判定 + 写入。duplicate 丢弃不入库；new_leaf/new_root 转 TaxonomyLabel 入库。"""
+    """判定 + 写入。duplicate 丢弃不入库；new_leaf/new_root 转 TaxonomyLabel 入库。
+
+    去重有两层：
+      1. 同名精确查重：若 store 里已有同名 label，直接判 duplicate（cosine 不参与）。
+         防止"同名不同 embedding"的 proposal 双重入库破坏 Taxonomy._by_name 索引
+         （last-wins 会让首个同名标签 get() 不可达但仍残留在 labels 列表）。
+      2. embedding cosine 去重：与任一已有标签 cosine > dedup_threshold → duplicate。
+    """
+    existing = store.existing_labels()
+    # Layer 1: same-name exact dedup (prevents _by_name index corruption).
+    same_name = next((lbl for lbl in existing if lbl.label == proposal.label), None)
+    if same_name is not None:
+        return ProposalResolution(kind="duplicate", maps_to=same_name.label)
+    # Layer 2: embedding cosine dedup + mount decision.
     res = resolve_proposal(
-        proposal, store.existing_labels(),
+        proposal, existing,
         dedup_threshold=dedup_threshold, mount_threshold=mount_threshold,
     )
     if res.kind == "duplicate":

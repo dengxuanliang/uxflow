@@ -99,3 +99,48 @@ def test_ingest_new_root_sets_new_root_flag():
     added = store.snapshot().get("new_leaf")  # proposal.label is "new_leaf"
     assert added.new_root is True
     assert added.parent is None
+
+
+def test_ingest_same_name_different_embedding_treated_as_duplicate():
+    """Same-label collision must NOT double-add even when embeddings differ.
+
+    Without the same-name guard, two proposals with label="new_leaf" but
+    different embeddings (cosine < 0.85) would each call store.add_label,
+    corrupting Taxonomy._by_name (last-wins makes the first unreachable via
+    get() while it still lingers in the labels list).
+    """
+    store = _store()
+    # First proposal: orthogonal embedding -> new_root (not a dup by cosine)
+    p1 = LabelProposal(
+        label="colliding_label", description="desc v1", parent=None,
+        description_embedding=[0.0, 0.0, 1.0], keywords=["kw1"],
+        source_sub_problem_id="p1",
+    )
+    res1 = ingest_proposal(p1, store, created_at="2026-07-10T00:00:00Z")
+    assert res1.kind == "new_root"
+    assert len(store.existing_labels()) == 3  # 2 original + 1 new
+
+    # Second proposal: SAME label name, totally different embedding (cosine ~0)
+    p2 = LabelProposal(
+        label="colliding_label", description="desc v2", parent=None,
+        description_embedding=[1.0, 0.0, 0.0], keywords=["kw2"],
+        source_sub_problem_id="p2",
+    )
+    res2 = ingest_proposal(p2, store, created_at="2026-07-10T00:00:00Z")
+    assert res2.kind == "duplicate"
+    assert res2.maps_to == "colliding_label"
+    # No double-add: still exactly 3 labels, _by_name points to first version.
+    assert len(store.existing_labels()) == 3
+    snap = store.snapshot()
+    added = snap.get("colliding_label")
+    assert added is not None
+    assert added.description == "desc v1"  # first one wins
+
+
+def test_resolve_proposal_pure_function_still_works_without_same_name_check():
+    """resolve_proposal remains a pure dedup-by-cosine + mount function;
+    the same-name guard lives only in ingest_proposal (which has store access).
+    """
+    prop = _proposal([0.0, 0.0, 1.0])
+    res = resolve_proposal(prop, _labels())
+    assert res.kind == "new_root"

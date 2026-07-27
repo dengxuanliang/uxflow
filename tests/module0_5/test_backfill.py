@@ -60,3 +60,31 @@ async def test_backfill_judge_length_mismatch_recorded(populated_index):
 
     result = await run_backfill(_new_label(), populated_index, ShortJudge(), top_k=10)
     assert any("results for" in e for e in result.errors)
+    # Behavior contract under length mismatch:
+    #   - candidates_screened reflects the full recall (3 slices)
+    #   - the one match=True returned by the judge IS written back (not lost)
+    #   - trailing candidates with no judge result are skipped (not written)
+    assert result.candidates_screened == 3
+    assert result.judged_true == 1
+    assert result.slices_written == 1
+    a = populated_index._get_signature("A", 0)
+    assert "handle_async_race" in (a.capability_labels or [])
+    b = populated_index._get_signature("B", 0)
+    assert "handle_async_race" not in (b.capability_labels or [])
+
+
+async def test_backfill_judge_returns_extra_results_does_not_crash(populated_index):
+    """Judge returning MORE results than slices must not crash; extra results
+    are silently dropped (candidates is the authoritative length)."""
+    class LongJudge:
+        async def judge_batch(self, *, slices, target_capability, trajectory_signal, rubric=None):
+            from module1.models import JudgeResult
+            # returns 5 results for 3 slices — extras must be dropped
+            return [JudgeResult(match=True, confidence=0.9, spans=[], reasoning="")
+                    for _ in range(5)]
+
+    result = await run_backfill(_new_label(), populated_index, LongJudge(), top_k=10)
+    # No length-mismatch error is recorded because candidates (3) <= results (5);
+    # the iteration is bounded by candidates. All 3 candidates get match=True.
+    assert result.judged_true == 3
+    assert result.slices_written == 3

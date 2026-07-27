@@ -77,13 +77,26 @@ class SwappableAsyncClient:
 
         Returns ``(old_id, new_id)`` so callers can verify the swap
         actually changed objects (useful for tests).
+
+        If ``new.__aenter__()`` raises, the half-constructed client is closed
+        before the exception propagates — otherwise its underlying connection
+        pool would leak (``self._client`` correctly stays pointing at ``old``).
         """
         if self._swap_lock is None:
             self._swap_lock = asyncio.Lock()
         async with self._swap_lock:
             old = self._client
             new = self._factory()
-            await new.__aenter__()
+            try:
+                await new.__aenter__()
+            except Exception:
+                # __aenter__ failed: clean up the half-open client so its
+                # connection pool doesn't leak. old remains current.
+                try:
+                    await new.aclose()
+                except Exception:
+                    pass
+                raise
             self._client = new
             if old is not None:
                 try:

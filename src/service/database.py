@@ -95,7 +95,17 @@ class DatabaseManager:
         return results
 
 
+_ALLOWED_COUNT_TABLES = frozenset({"problems", "trajectories"})
+
+
 def _safe_count(conn, table) -> int | None:
+    """Count rows in ``table``. Returns None for unknown tables or SQLite errors.
+
+    Table name can't be parameterized (? placeholder), so it must be validated
+    against a strict allowlist before interpolation — never accept caller input.
+    """
+    if table not in _ALLOWED_COUNT_TABLES:
+        return None
     try:
         return conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
     except sqlite3.OperationalError:

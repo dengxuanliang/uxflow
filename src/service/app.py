@@ -21,6 +21,45 @@ __all__ = ["create_app"]
 _WEB_DIR = pathlib.Path(__file__).parent / "web"
 
 
+def _validate_db_path(path: str, current: pathlib.Path) -> pathlib.Path:
+    """Validate a user-supplied DB path for /databases/switch.
+
+    Constraints (defense in depth — local single-user tool, but still):
+      1. Relative paths resolve against the current DB's parent dir.
+      2. After resolution, the path must stay inside that parent dir
+         (rejects ``../`` escape and absolute paths outside the root).
+      3. The suffix must be ``.db``.
+      4. If the target already exists and is non-empty, it must look like
+         a SQLite file (header ``SQLite format 3``) so we don't overwrite
+         arbitrary user files or pollute non-DB content.
+    """
+    if not path:
+        raise HTTPException(status_code=400, detail="库路径不能为空")
+    root = current.parent.resolve()
+    p = pathlib.Path(path)
+    if not p.is_absolute():
+        p = root / p
+    resolved = p.resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail=f"库必须在 {root} 下（防止路径逃逸）",
+        )
+    if resolved.suffix != ".db":
+        raise HTTPException(status_code=400, detail="库文件必须以 .db 结尾")
+    if resolved.exists() and resolved.stat().st_size > 0:
+        with open(resolved, "rb") as f:
+            header = f.read(16)
+        if not header.startswith(b"SQLite format 3"):
+            raise HTTPException(
+                status_code=400,
+                detail="目标文件不是有效的 SQLite 库",
+            )
+    return resolved
+
+
 def create_app(
     *,
     store: Any = None,
@@ -324,13 +363,9 @@ def create_app(
         if db_manager is None:
             raise HTTPException(status_code=501, detail="库管理未启用")
         path = (payload.get("path") or "").strip()
-        if not path:
-            raise HTTPException(status_code=400, detail="库路径不能为空")
         if _run_lock.locked():
             raise HTTPException(status_code=409, detail="有任务运行中，无法切换库")
-        p = pathlib.Path(path)
-        if not p.is_absolute():
-            p = db_manager.current().parent / p
+        p = _validate_db_path(path, db_manager.current())
         db_manager.switch(p)
         return {"current": str(db_manager.current()),
                 "databases": db_manager.list_databases()}

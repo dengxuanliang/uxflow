@@ -39,8 +39,15 @@ class Taxonomy:
     def __init__(self, version: str, updated_at: str, labels: list[TaxonomyLabel]):
         self.version = version
         self.updated_at = updated_at
-        self.labels = labels
-        self._by_name: dict[str, TaxonomyLabel] = {lbl.label: lbl for lbl in labels}
+        # Defensive dedup by label name: callers (e.g. MemoryTaxonomyStore.add_label)
+        # should keep labels unique, but a duplicated list would otherwise leave
+        # entries in self.labels unreachable via get() (last-wins in _by_name).
+        # This guard makes the read view self-consistent regardless of input.
+        seen: dict[str, TaxonomyLabel] = {}
+        for lbl in labels:
+            seen[lbl.label] = lbl
+        self.labels = list(seen.values())
+        self._by_name = seen
 
     @classmethod
     def load(cls, path: str | pathlib.Path) -> "Taxonomy":
@@ -124,7 +131,10 @@ class MemoryTaxonomyStore:
         return list(self._labels)
 
     def add_label(self, label: TaxonomyLabel) -> None:
-        """追加新标签 + version patch +1。不影响已有条目。"""
+        """追加新标签 + version patch +1。同名标签已存在则替换（保持唯一性，
+        与 SqliteTaxonomyStore 的 INSERT OR REPLACE 语义对齐）。"""
+        self._labels = [existing for existing in self._labels
+                        if existing.label != label.label]
         self._labels.append(label)
         self._version = _bump_patch(self._version)
 

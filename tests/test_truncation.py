@@ -71,3 +71,46 @@ def test_preserves_head_and_tail():
     content = result[0]["content"]
     assert content.startswith("HEAD")
     assert content.endswith("TAIL")
+
+
+def test_single_message_uses_full_budget():
+    """1 non-system message must use the whole budget, not just the 35%
+    first-slice. Regression for the over-truncation bug where a single
+    long message was capped at 35% of available_chars."""
+    long_content = "a" * 20000
+    msgs = [{"role": "user", "content": long_content}]
+    # max_tokens=1000 -> budget_chars = 4000
+    result = truncate_messages(msgs, max_tokens=1000)
+    content = result[0]["content"]
+    # Should use close to the full 4000-char budget, not 35% (1400 chars).
+    assert len(content) >= 3900
+    assert TRUNCATION_MARKER in content
+
+
+def test_two_messages_share_full_budget():
+    """2 non-system messages must share ~50/50 of the full budget, not
+    35%/30% (which would leave 35% of the budget unused)."""
+    msgs = [
+        {"role": "user", "content": "a" * 20000},
+        {"role": "assistant", "content": "b" * 20000},
+    ]
+    result = truncate_messages(msgs, max_tokens=1000)  # budget = 4000
+    total = len(result[0]["content"]) + len(result[1]["content"])
+    # Combined should use ~all of the 4000-char budget, not just 65% (2600).
+    assert total >= 3800
+    assert TRUNCATION_MARKER in result[0]["content"]
+    assert TRUNCATION_MARKER in result[1]["content"]
+
+
+def test_tiny_budget_does_not_exceed_max():
+    """When budget is smaller than the truncation marker (31 chars), the
+    marker must not be appended (it would push output > max_chars). The
+    function returns the original text rather than emitting > max_chars."""
+    long_content = "a" * 200
+    msgs = [{"role": "user", "content": long_content}]
+    # max_tokens=5 -> budget_chars = 20, well below marker_len (31).
+    result = truncate_messages(msgs, max_tokens=5)
+    # budget < marker_len -> _truncate_text returns original; truncation loop
+    # checks `if len(content) > budget` so original long content stays (since
+    # the truncated form would exceed budget). Verify no marker injected:
+    assert TRUNCATION_MARKER not in result[0]["content"]

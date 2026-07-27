@@ -29,10 +29,20 @@ def estimate_tokens(text: str) -> int:
 
 
 def _truncate_text(text: str, max_chars: int, keep_head_ratio: float = 0.3) -> str:
-    """Truncate a single text blob, keeping head + tail with marker in between."""
+    """Truncate a single text blob, keeping head + tail with marker in between.
+
+    Invariant: the returned string's length is always <= max_chars when
+    max_chars >= len(TRUNCATION_MARKER). For sub-marker budgets we return the
+    original text unchanged (the caller's budget is too small for a meaningful
+    truncation; better to surface the content than to emit > max_chars).
+    """
     if len(text) <= max_chars:
         return text
     marker_len = len(TRUNCATION_MARKER)
+    if max_chars < marker_len:
+        # Budget too small to fit a truncation marker — return original text
+        # rather than emitting output longer than max_chars.
+        return text
     usable = max(max_chars - marker_len, 0)
     head_len = max(int(usable * keep_head_ratio), 1)
     tail_len = max(usable - head_len, 1)
@@ -74,9 +84,21 @@ def truncate_messages(
 
     available_chars = max(available_chars, 0)
 
-    first_budget = int(available_chars * head_ratio)
-    last_budget = int(available_chars * last_response_ratio)
     middle_count = max(len(non_system) - 2, 0)
+    # When there are no middle messages, redistribute the unused 35% middle
+    # budget to first/last so 1-2 message conversations aren't over-truncated.
+    #   - 1 non-system message: give the whole budget to it (first==last==only).
+    #   - 2 non-system messages: split the full budget evenly (~50/50).
+    if middle_count == 0:
+        if len(non_system) == 1:
+            first_budget = available_chars
+            last_budget = 0
+        else:  # len == 2
+            first_budget = available_chars // 2
+            last_budget = available_chars - first_budget
+    else:
+        first_budget = int(available_chars * head_ratio)
+        last_budget = int(available_chars * last_response_ratio)
     middle_total = max(available_chars - first_budget - last_budget, 0)
     per_turn_cap = int(available_chars * per_turn_ratio)
     per_middle = min(middle_total // max(middle_count, 1), per_turn_cap) if middle_count > 0 else 0

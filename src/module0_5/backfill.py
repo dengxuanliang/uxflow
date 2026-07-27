@@ -74,7 +74,16 @@ async def run_backfill(
 
     judged_true = 0
     written = 0
-    for sig, res in zip(candidates, results):
+    # Iterate by index over candidates; results may be shorter (judge returned
+    # fewer) or longer (judge returned extra). Skip indices without a matching
+    # result — they are already recorded in `errors` above. Using zip() here
+    # would silently truncate at the shorter length and lose writebacks for
+    # trailing candidates whose match=True happened to fall past the cutoff.
+    _MISSING = object()
+    for i, sig in enumerate(candidates):
+        res = results[i] if i < len(results) else _MISSING
+        if res is _MISSING:
+            continue
         if res.match:
             judged_true += 1
             try:
