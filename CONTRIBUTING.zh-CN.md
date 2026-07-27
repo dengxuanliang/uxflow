@@ -29,7 +29,7 @@ uv sync --extra dev            # or: pip install -e ".[dev]"
 - **完整套件**:需要 `local-embed` extra 并会下载 Qwen 模型:
 
   ```bash
-  uv sync --extra local-embed
+  UV_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple" uv sync --extra local-embed
   uv run pytest
   ```
 

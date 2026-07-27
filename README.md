@@ -36,7 +36,7 @@ cp .env.example .env                 # then edit .env to fill in LITELLM_BASE / 
 The core install is lightweight (httpx, datasketch, numpy) and needs no ML dependencies. The `service` extra pulls FastAPI + uvicorn for the Inspector UI. To enable the optional local embedding backend (Qwen via sentence-transformers + torch):
 
 ```bash
-uv sync --extra local-embed           # or: pip install -e ".[local-embed]"
+UV_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple" uv sync --extra local-embed
 ```
 
 ## Quickstart
@@ -75,7 +75,7 @@ The core install carries no ML dependencies: use `ApiEmbedder` (remote endpoint)
 ```bash
 uv run pytest -m "not requires_model"   # pure-logic, no ML deps
 
-uv sync --extra local-embed             # needed for the full suite
+UV_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple" uv sync --extra local-embed             # needed for the full suite
 uv run pytest                           # full suite (loads the Qwen model)
 ```
 

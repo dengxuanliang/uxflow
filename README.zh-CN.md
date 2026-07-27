@@ -36,7 +36,7 @@ cp .env.example .env                 # 编辑 .env 填入 LITELLM_BASE / LITELLM
 核心安装非常轻量(httpx、datasketch、numpy),无需任何 ML 依赖。`service` extra 拉取 FastAPI + uvicorn 用于 Inspector UI。如需启用可选的本地嵌入后端(通过 sentence-transformers + torch 运行 Qwen):
 
 ```bash
-uv sync --extra local-embed           # 或: pip install -e ".[local-embed]"
+UV_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple" uv sync --extra local-embed
 ```
 
 ## 快速上手
@@ -75,7 +75,7 @@ uv run python scripts/inspector_serve.py
 ```bash
 uv run pytest -m "not requires_model"   # 纯逻辑,零 ML 依赖
 
-uv sync --extra local-embed             # 运行完整套件前需先安装
+UV_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple" uv sync --extra local-embed             # 运行完整套件前需先安装
 uv run pytest                           # 完整套件(加载 Qwen 模型)
 ```
 

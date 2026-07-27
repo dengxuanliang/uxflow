@@ -29,7 +29,7 @@ Tests are split by whether they need the real embedding model, using the `requir
 - **Full suite** requires the `local-embed` extra and downloads the Qwen model:
 
   ```bash
-  uv sync --extra local-embed
+  UV_INDEX_URL="https://pypi.tuna.tsinghua.edu.cn/simple" uv sync --extra local-embed
   uv run pytest
   ```
 
