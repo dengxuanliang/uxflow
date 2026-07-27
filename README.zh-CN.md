@@ -14,7 +14,7 @@ UXFlow 通过筛选高质量的 SWE agent 轨迹切片来治理 SFT(监督微调
 - **module3** —— 去重 + 子模选择(跨问题去重 + 覆盖率最优的最终挑选)
 - **module0_5** —— 标签自演化(向共享 taxonomy 提议/回填新能力标签;CLI:`uxflow-evolve`)
 
-`llm_gateway` 提供各阶段共用的自适应 LLM 调用网关;`uxflow_embed` 在统一 `Embedder` 协议下可插拔(Fake / Local Qwen / API)。可选的 `service` 包通过 FastAPI Inspector UI 暴露同一条流水线。架构细节参见 [`docs/`](docs/)。
+`llm_gateway` 提供各阶段共用的自适应 LLM 调用网关;`uxflow_embed` 在统一 `Embedder` 协议下可插拔(Fake / Local Qwen / API)。可选的 `service` 包通过 FastAPI Inspector UI 暴露同一条流水线。模块地图与数据流参见 [`docs/architecture.md`](docs/architecture.md)。
 
 ## 环境要求
 
@@ -83,7 +83,7 @@ uv run pytest                           # 完整套件(加载 Qwen 模型)
 
 ## 贡献
 
-参见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。
+参见 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。模块地图与数据流图参见 [`docs/architecture.md`](docs/architecture.md)。
 
 ## 许可证
 

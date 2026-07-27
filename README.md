@@ -14,7 +14,7 @@ UXFlow curates SFT (supervised fine-tuning) training data by selecting high-qual
 - **module3** — dedup + submodular selection (cross-problem dedup, coverage-optimized final pick)
 - **module0_5** — label self-evolution (proposes/backfills new capability labels into the shared taxonomy; CLI: `uxflow-evolve`)
 
-`llm_gateway` provides the adaptive LLM call gateway used across stages; `uxflow_embed` pluggably backs embedding (Fake / Local Qwen / API). The optional `service` package exposes the same pipeline over a FastAPI Inspector UI. See [`docs/`](docs/) for architecture details.
+`llm_gateway` provides the adaptive LLM call gateway used across stages; `uxflow_embed` pluggably backs embedding (Fake / Local Qwen / API). The optional `service` package exposes the same pipeline over a FastAPI Inspector UI. See [`docs/architecture.md`](docs/architecture.md) for the module map and data flow.
 
 ## Requirements
 
@@ -83,7 +83,7 @@ The `-m "not requires_model"` subset runs pure logic with zero ML dependencies. 
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md). For a module map and data-flow diagram, see [`docs/architecture.md`](docs/architecture.md).
 
 ## License
 

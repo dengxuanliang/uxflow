@@ -25,3 +25,10 @@ def test_readme_zh_cn_mirrors_install_and_quickstart():
     text = README_CN.read_text(encoding="utf-8")
     assert "--extra service" in text
     assert "inspector_serve" in text
+
+
+def test_readme_docs_link_targets_architecture_md():
+    for readme in (README, README_CN):
+        text = readme.read_text(encoding="utf-8")
+        assert "docs/architecture.md" in text, (
+            f"{readme.name} should link docs/architecture.md, not bare docs/")
