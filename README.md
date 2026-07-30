@@ -46,11 +46,10 @@ uv sync --extra local-embed           # or: pip install -e ".[local-embed]"
 cp .env.example .env
 ${EDITOR:-vi} .env                    # set LITELLM_BASE + LITELLM_KEY
 
-# 2. Add the local embedding backend (the smoke + Inspector use the local
-#    Qwen3-Embedding model; first run downloads it once):
-uv sync --extra local-embed
+# 2. Verify the gateway reaches both models:
+uv run python scripts/check_model_split.py
 
-# 3. Run the end-to-end smoke on bundled fixtures:
+# 3. Run the end-to-end smoke on bundled fixtures (needs LLM only, no torch):
 uv run python scripts/e2e_smoke.py "写入py文件有语法错误"
 
 # 4. Or start the Inspector web UI:
@@ -60,7 +59,14 @@ uv run python scripts/inspector_serve.py
 
 The smoke script loads `fixtures/taxonomy_v0.json` + `fixtures/trajectories/sample_01.jsonl`, runs module 0 → 1 → 2 → 3 → 0.5 end-to-end, and prints intermediate results at each stage for human inspection.
 
-> **Embedding:** the smoke and Inspector default to `LocalEmbedder` (local Qwen). The `Embedder` protocol is pluggable (Fake / Local / API — see [Embedding backends](#embedding-backends) below), but these two scripts don't yet expose a switch, so running them without `local-embed` requires editing the script (see #8).
+> **Embedding default:** both scripts default to `UXFLOW_EMBED_BACKEND=fake`, which needs no ML dependencies. Fake vectors are deterministic but **semantically meaningless** — they let you verify the pipeline runs, not that its picks are good. For real curation, switch to a real backend:
+>
+> ```bash
+> uv sync --extra local-embed
+> UXFLOW_EMBED_BACKEND=local uv run python scripts/e2e_smoke.py "写入py文件有语法错误"
+> ```
+>
+> Vectors persisted in the SQLite DB are backend-specific; when you switch backends, point `UXFLOW_DB` at a fresh database.
 
 ## Data directory
 
@@ -68,13 +74,15 @@ Module 0.5 (label self-evolution) persists to a single SQLite file. The default 
 
 ## Embedding backends
 
-Embedding is pluggable behind a single `Embedder` protocol in the `uxflow_embed` package:
+Embedding is pluggable behind a single `Embedder` protocol in the `uxflow_embed` package. Select one with the `UXFLOW_EMBED_BACKEND` environment variable:
 
-- **FakeEmbedder** — deterministic, no ML dependencies. Used in tests.
-- **LocalEmbedder** — local Qwen embedding model, requires the `local-embed` extra.
-- **ApiEmbedder** — calls an OpenAI-compatible embedding endpoint.
+- **`fake`** (default) — `FakeEmbedder`, deterministic, no ML dependencies. Used in tests and for smoke runs; vectors carry no semantics.
+- **`local`** — `LocalEmbedder`, local Qwen embedding model, requires the `local-embed` extra. Downloads the model on first use.
+- **`api`** — `ApiEmbedder`, calls an OpenAI-compatible embedding endpoint. Needs `OPENAI_API_KEY`; tune with `UXFLOW_EMBED_API_MODEL` / `_DIM` / `_BASE`.
 
-The core install carries no ML dependencies: use `ApiEmbedder` (remote endpoint) or `FakeEmbedder`. Install the `local-embed` extra only if you want to run Qwen locally.
+The core install carries no ML dependencies. Install the `local-embed` extra only if you want to run Qwen locally.
+
+> If you set `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1` before the Qwen model is cached, the first download is blocked and `local` fails. Leave them commented out until the model is on disk.
 
 ## Test
 

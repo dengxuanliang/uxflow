@@ -30,6 +30,7 @@ def create_app(
     deps: Any = None,
     tau_q: float = 0.90,
     db_manager: Any = None,
+    lifespan: Any = None,
 ) -> FastAPI:
     """Build the app. Inject store/run_fn/deps for testing; defaults for prod."""
     store = store or MemoryRunStore()
@@ -43,7 +44,7 @@ def create_app(
         from service.orchestrator import run_ingest
         ingest_fn = run_ingest
 
-    app = FastAPI(title="Trajectory Inspector")
+    app = FastAPI(title="Trajectory Inspector", lifespan=lifespan)
 
     # Track in-flight background tasks so a run can be cancelled (see /cancel).
     _tasks: dict[str, asyncio.Task] = {}

@@ -32,7 +32,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/llm_gateway", "src/module0", "src/module1", "src/module2", "src/module3", "src/uxflow_embed", "src/module0_5", "src/service"]
-force-include = { "src/uxflow_paths.py" = "uxflow_paths.py", "scripts/uxflow_evolve.py" = "uxflow_evolve.py" }
+force-include = { "src/uxflow_paths.py" = "uxflow_paths.py", "src/uxflow_runtime.py" = "uxflow_runtime.py", "scripts/uxflow_evolve.py" = "uxflow_evolve.py" }
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -17,11 +17,11 @@ import pathlib
 from dotenv import load_dotenv
 
 from llm_gateway import GatewayConfig, LLMGateway
-from module0.embedding import EmbeddingModel
 from module1.pipeline import PipelineConfig, TrajectoryPipeline
 from module3.compose import GeneralDataConfig
 from module3.pipeline import select_final_dataset
 from module3.selection import SelectionConfig
+from uxflow_runtime import make_embedder, require_llm_config, resolve_models
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FIXTURE_PATH = ROOT / "fixtures" / "trajectories" / "smoke_20.jsonl"
@@ -61,18 +61,21 @@ EXPECTED_SELECTED = {
 
 async def main() -> None:
     load_dotenv(ROOT / ".env")
-    model = os.environ.get("MODULE1_JUDGE_MODEL") or os.environ.get(
-        "MODULE0_TEST_MODEL", "gpt-4o-mini"
-    )
+    model = os.environ.get("MODULE1_JUDGE_MODEL") or resolve_models()[1]
     report_path = pathlib.Path(os.environ.get("COMPLEX_SMOKE_REPORT", REAL_REPORT_PATH))
 
-    print("Loading local Qwen embedding model...")
-    embedding_model = EmbeddingModel()
+    backend = os.environ.get("UXFLOW_EMBED_BACKEND", "fake")
+    print(f"Building embedding backend ({backend})...")
+    embedding_model = make_embedder()
     print(f"Embedding model ready: dim={embedding_model.dimension}")
+    if backend == "fake":
+        print("  WARNING: fake backend — vectors are deterministic but semantically "
+              "meaningless; the report will not reflect real recall quality.")
 
+    base, key = require_llm_config()
     config = GatewayConfig(
-        litellm_base=os.environ.get("LITELLM_BASE", "http://localhost:4000/v1"),
-        litellm_key=os.environ.get("LITELLM_KEY", ""),
+        litellm_base=base,
+        litellm_key=key,
         transport_stuck_seconds=0,
     )
 
