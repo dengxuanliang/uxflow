@@ -25,14 +25,12 @@ import sys
 from dotenv import load_dotenv
 
 load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 from llm_gateway import GatewayConfig, LLMGateway  # noqa: E402
-
-# Same defaults as inspector_serve.build_app — keep these in sync so this
-# check exercises exactly what production wiring resolves.
-_COMPILE_DEFAULT = "gpt-5.5"
-_JUDGE_DEFAULT = "gpt-4o-mini"
+from uxflow_runtime import (  # noqa: E402
+    DEFAULT_COMPILE_MODEL as _COMPILE_DEFAULT,
+    DEFAULT_JUDGE_MODEL as _JUDGE_DEFAULT,
+)
 
 _PING_MESSAGES = [
     {"role": "user", "content": "Reply with the single word: pong"},

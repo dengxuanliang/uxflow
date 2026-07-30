@@ -2,14 +2,15 @@
 
 Prints the distribution so mount_threshold can be set from data, not guessed.
 Run locally (needs the model): .venv/bin/python scripts/calibrate_mount_threshold.py
+
+Intentionally uses the real LocalEmbedder — calibration against FakeEmbedder
+would be meaningless. Requires the local-embed extra.
 """
 # SPDX-License-Identifier: Apache-2.0
-import os
 import pathlib
 import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).parent.parent / "src"))
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import numpy as np
 from module0.embedding import EmbeddingModel

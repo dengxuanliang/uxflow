@@ -7,7 +7,6 @@ Usage:
 
 import asyncio
 import json
-import os
 import sys
 import pathlib
 
@@ -16,18 +15,20 @@ load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
 
 from llm_gateway import LLMGateway, GatewayConfig  # noqa: E402  (import after load_dotenv)
 from module0 import QueryCompiler, Taxonomy  # noqa: E402
+from uxflow_runtime import require_llm_config, resolve_models  # noqa: E402
 
 
 async def main():
     raw_input = sys.argv[1] if len(sys.argv) > 1 else "写入py文件有语法错误"
-    model = os.environ.get("MODULE0_TEST_MODEL", "gpt-4o-mini")
+    model, _judge_model = resolve_models()
 
     taxonomy_path = pathlib.Path(__file__).parent.parent / "fixtures" / "taxonomy_v0.json"
     taxonomy = Taxonomy.load(taxonomy_path)
 
+    base, key = require_llm_config()
     config = GatewayConfig(
-        litellm_base=os.environ.get("LITELLM_BASE", "http://localhost:4000/v1"),
-        litellm_key=os.environ.get("LITELLM_KEY", ""),
+        litellm_base=base,
+        litellm_key=key,
         transport_stuck_seconds=0,
     )
     async with LLMGateway(config) as gw:

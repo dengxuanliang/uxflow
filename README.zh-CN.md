@@ -46,11 +46,10 @@ uv sync --extra local-embed           # 或: pip install -e ".[local-embed]"
 cp .env.example .env
 ${EDITOR:-vi} .env                    # 设置 LITELLM_BASE + LITELLM_KEY
 
-# 2. 安装本地嵌入后端（smoke + Inspector 用本地 Qwen3-Embedding 模型;
-#    首次运行会下载一次）:
-uv sync --extra local-embed
+# 2. 验证网关能否连通两个模型:
+uv run python scripts/check_model_split.py
 
-# 3. 在捆绑的 fixtures 上跑端到端 smoke:
+# 3. 在自带 fixtures 上跑端到端 smoke(只需 LLM,无需 torch):
 uv run python scripts/e2e_smoke.py "写入py文件有语法错误"
 
 # 4. 或启动 Inspector web UI:
@@ -60,7 +59,14 @@ uv run python scripts/inspector_serve.py
 
 该 smoke 脚本加载 `fixtures/taxonomy_v0.json` + `fixtures/trajectories/sample_01.jsonl`，端到端运行 module 0 → 1 → 2 → 3 → 0.5，并在每个阶段打印中间结果供人工检查。
 
-> **嵌入:** smoke 和 Inspector 默认用 `LocalEmbedder`（本地 Qwen）。`Embedder` 协议可插拔（Fake / Local / API — 见下文 [嵌入后端](#嵌入后端)），但这两个脚本目前没暴露开关，所以不装 `local-embed` 跑它们需要改脚本（见 #8）。
+> **嵌入后端默认值:** 两个脚本默认 `UXFLOW_EMBED_BACKEND=fake`,无需任何 ML 依赖。fake 向量是确定性的但**语义无意义**——它只能验证流水线跑得通,不能验证选出的结果好不好。真实治理请切到真实后端:
+>
+> ```bash
+> uv sync --extra local-embed
+> UXFLOW_EMBED_BACKEND=local uv run python scripts/e2e_smoke.py "写入py文件有语法错误"
+> ```
+>
+> SQLite 中持久化的向量与后端绑定;切换后端时请把 `UXFLOW_DB` 指向一个全新的数据库。
 
 ## 数据目录
 
@@ -68,13 +74,15 @@ uv run python scripts/inspector_serve.py
 
 ## 嵌入后端
 
-嵌入能力通过 `uxflow_embed` 包中统一的 `Embedder` 协议实现可插拔:
+嵌入能力通过 `uxflow_embed` 包中统一的 `Embedder` 协议实现可插拔,用环境变量 `UXFLOW_EMBED_BACKEND` 选择:
 
-- **FakeEmbedder** —— 确定性输出，无 ML 依赖。用于测试。
-- **LocalEmbedder** —— 本地 Qwen 嵌入模型，需要 `local-embed` extra。
-- **ApiEmbedder** —— 调用 OpenAI 兼容的嵌入端点。
+- **`fake`**(默认)—— `FakeEmbedder`,确定性输出,无 ML 依赖。用于测试与 smoke 跑通;向量不带语义。
+- **`local`** —— `LocalEmbedder`,本地 Qwen 嵌入模型,需要 `local-embed` extra。首次使用时下载模型。
+- **`api`** —— `ApiEmbedder`,调用 OpenAI 兼容的嵌入端点。需要 `OPENAI_API_KEY`,可用 `UXFLOW_EMBED_API_MODEL` / `_DIM` / `_BASE` 调整。
 
-核心安装不携带任何 ML 依赖:请使用 `ApiEmbedder`（远程端点）或 `FakeEmbedder`。仅当你想在本地运行 Qwen 时才安装 `local-embed` extra。
+核心安装不携带任何 ML 依赖。仅当你想在本地运行 Qwen 时才安装 `local-embed` extra。
+
+> 如果在 Qwen 模型尚未缓存前就设了 `HF_HUB_OFFLINE=1` / `TRANSFORMERS_OFFLINE=1`,首次下载会被阻断,`local` 后端将失败。请在模型落盘前保持这两项注释状态。
 
 ## 测试
 

@@ -10,17 +10,21 @@ Usage:
 import asyncio
 import os
 import pathlib
+from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
 
 load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
 import uvicorn  # noqa: E402
 
 from llm_gateway import LLMGateway, GatewayConfig  # noqa: E402
 from module0 import QueryCompiler, Taxonomy  # noqa: E402
-from module0.embedding import EmbeddingModel  # noqa: E402
+from uxflow_runtime import (  # noqa: E402
+    make_embedder,
+    require_llm_config,
+    resolve_models,
+)
 from module1.pipeline import TrajectoryPipeline, PipelineConfig  # noqa: E402
 from module1.loader import load_trajectories  # noqa: E402
 from module1.index import MemoryIndex  # noqa: E402
@@ -35,23 +39,23 @@ def build_app():
     # Model split: a strong instruction-following model compiles problem specs
     # (high-leverage, low-volume); a separate model judges slices (highest-volume
     # LLM call). Two distinct env keys so compile and judge can use different
-    # providers/families.
-    # Compile default is gpt-5.5, NOT claude-opus-4-8: Call 1/2 demand strict JSON
-    # output, and opus frequently returns empty or drops into an assistant/"memory"
-    # mode on agent-behavior-flavored inputs (measured 0/3 vs gpt-5.5 3/3), which
-    # surfaces as "Call 1 failed after retries". Override via UXFLOW_COMPILE_MODEL.
-    compile_model = os.environ.get("UXFLOW_COMPILE_MODEL", "gpt-5.5")
-    judge_model = os.environ.get("UXFLOW_JUDGE_MODEL", "gpt-4o-mini")
-    emb = EmbeddingModel()
+    # providers/families. Defaults live in uxflow_runtime.resolve_models():
+    # compile defaults to gpt-5.5, NOT claude-opus-4-8, because Call 1/2 demand
+    # strict JSON output and opus frequently returns empty or drops into an
+    # assistant/"memory" mode on agent-behavior-flavored inputs (measured 0/3 vs
+    # gpt-5.5 3/3), surfacing as "Call 1 failed after retries".
+    compile_model, judge_model = resolve_models()
+    emb = make_embedder()
     taxonomy = Taxonomy.load(root / "fixtures" / "taxonomy_v0.json")
 
     # Persistent SQLite backend (path from --db > UXFLOW_DB env > XDG data dir).
     db = resolve_db_path()
     ensure_parent(db)
 
+    base, key = require_llm_config()
     gw_config = GatewayConfig(
-        litellm_base=os.environ.get("LITELLM_BASE", "http://localhost:4000/v1"),
-        litellm_key=os.environ.get("LITELLM_KEY", ""),
+        litellm_base=base,
+        litellm_key=key,
         transport_stuck_seconds=0,
     )
     gateway = LLMGateway(gw_config)  # long-lived; entered on startup
@@ -85,17 +89,19 @@ def build_app():
 
     store = MemoryRunStore()
     tau_q = float(os.environ.get("UXFLOW_QUESTION_DEDUP_THRESHOLD", "0.90"))
+
+    @asynccontextmanager
+    async def _lifespan(app):
+        await gateway.__aenter__()
+        try:
+            yield
+        finally:
+            await gateway.__aexit__(None, None, None)
+
     # run_fn/search_fn/ingest_fn default inside create_app (run_pipeline etc.).
     # create_app 建真锁后调用 mgr.attach_lock 替换掉上面的 bootstrap Semaphore。
-    app = create_app(store=store, deps=deps, tau_q=tau_q, db_manager=mgr)
-
-    @app.on_event("startup")
-    async def _open_gateway():
-        await gateway.__aenter__()
-
-    @app.on_event("shutdown")
-    async def _close_gateway():
-        await gateway.__aexit__(None, None, None)
+    app = create_app(store=store, deps=deps, tau_q=tau_q, db_manager=mgr,
+                     lifespan=_lifespan)
 
     return app
 

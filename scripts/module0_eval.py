@@ -12,7 +12,6 @@ Usage:
 
 import asyncio
 import json
-import os
 import pathlib
 import time
 from collections import defaultdict
@@ -23,6 +22,7 @@ load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
 from llm_gateway import LLMGateway, GatewayConfig  # noqa: E402  (import after load_dotenv)
 from module0 import QueryCompiler, Taxonomy  # noqa: E402
 from module0.parsing import ParseError  # noqa: E402
+from uxflow_runtime import require_llm_config, resolve_models  # noqa: E402
 
 FIXTURES_DIR = pathlib.Path(__file__).parent.parent / "fixtures"
 GOLDEN_SET_PATH = FIXTURES_DIR / "golden_eval_set.json"
@@ -136,11 +136,12 @@ def compute_drift(run_results):
 async def run_eval(num_runs=1, model=None):
     golden = load_golden_set()
     taxonomy = Taxonomy.load(TAXONOMY_PATH)
-    model = model or os.environ.get("MODULE0_TEST_MODEL", "gpt-4o-mini")
+    model = model or resolve_models()[0]
 
+    base, key = require_llm_config()
     config = GatewayConfig(
-        litellm_base=os.environ.get("LITELLM_BASE", "http://localhost:4000/v1"),
-        litellm_key=os.environ.get("LITELLM_KEY", ""),
+        litellm_base=base,
+        litellm_key=key,
         concurrency=5,
         transport_stuck_seconds=0,
     )

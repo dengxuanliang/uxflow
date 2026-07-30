@@ -17,14 +17,13 @@ import pathlib
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
 
-# Default the local embedding model to offline: the model is expected to be
-# cached locally for this script, and the HF metadata check can stall on a
-# flaky network. Users can override by exporting HF_HUB_OFFLINE=0.
-os.environ.setdefault("HF_HUB_OFFLINE", "1")
-
 from llm_gateway import LLMGateway, GatewayConfig  # noqa: E402  (import after load_dotenv)
 from module0 import QueryCompiler, Taxonomy  # noqa: E402
-from module0.embedding import EmbeddingModel  # noqa: E402
+from uxflow_runtime import (  # noqa: E402
+    make_embedder,
+    require_llm_config,
+    resolve_models,
+)
 from module1.pipeline import TrajectoryPipeline, PipelineConfig  # noqa: E402
 from module3.compose import GeneralDataConfig  # noqa: E402
 from module3.pipeline import select_final_dataset  # noqa: E402
@@ -78,24 +77,28 @@ def _print_section(title: str):
 
 async def main():
     raw_input = sys.argv[1] if len(sys.argv) > 1 else "写入py文件有语法错误"
-    model = os.environ.get("MODULE0_TEST_MODEL", "gpt-4o-mini")
+    compile_model, judge_model = resolve_models()
     root = pathlib.Path(__file__).parent.parent
 
     taxonomy_path = root / "fixtures" / "taxonomy_v0.json"
     traj_name = sys.argv[2] if len(sys.argv) > 2 else "sample_01.jsonl"
     trajectories_path = root / "fixtures" / "trajectories" / traj_name
 
-    # ── 1. Load embedding model ──────────────────────────────────────────
-    print("⏳ 加载 embedding 模型 (Qwen3-Embedding-0.6B)...")
-    emb = EmbeddingModel()
-    print(f"✓ Embedding 模型就绪 (dim={emb.dimension})")
+    # ── 1. Build embedder (UXFLOW_EMBED_BACKEND: fake | local | api) ─────
+    backend = os.environ.get("UXFLOW_EMBED_BACKEND", "fake")
+    print(f"⏳ 构建 embedding backend ({backend})...")
+    emb = make_embedder()
+    print(f"✓ Embedding 就绪 (dim={emb.dimension})")
+    if backend == "fake":
+        print("  ⚠️  fake backend：向量为确定性哈希，仅用于跑通流程，语义无意义。")
 
     # ── 2. Gateway + Module 0 ────────────────────────────────────────────
     taxonomy = Taxonomy.load(taxonomy_path)
 
+    base, key = require_llm_config()
     config = GatewayConfig(
-        litellm_base=os.environ.get("LITELLM_BASE", "http://localhost:4000/v1"),
-        litellm_key=os.environ.get("LITELLM_KEY", ""),
+        litellm_base=base,
+        litellm_key=key,
         transport_stuck_seconds=0,
     )
 
@@ -103,10 +106,10 @@ async def main():
         # ── Module 0: Compile ProblemSpec ─────────────────────────────────
         _print_section("模块0: 编译 ProblemSpec")
         print(f"输入: \"{raw_input}\"")
-        print(f"模型: {model}\n")
+        print(f"compile 模型: {compile_model} / judge 模型: {judge_model}\n")
 
         compiler = QueryCompiler(
-            gateway=gw, taxonomy=taxonomy, model=model, embedding_model=emb
+            gateway=gw, taxonomy=taxonomy, model=compile_model, embedding_model=emb
         )
         spec = await compiler.compile(raw_input)
 
@@ -141,7 +144,7 @@ async def main():
         print(f"轨迹文件: {trajectories_path.name}")
 
         cfg = PipelineConfig(
-            judge_model=model,
+            judge_model=judge_model,
             recall_top_n=20,
             min_confidence=0.7,
             embedding_model=emb,
