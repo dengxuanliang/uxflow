@@ -25,9 +25,9 @@ from uxflow_runtime import make_embedder, require_llm_config, resolve_models
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 FIXTURE_PATH = ROOT / "fixtures" / "trajectories" / "smoke_20.jsonl"
-REAL_REPORT_PATH = (
-    ROOT / "docs" / "superpowers" / "reports" / "2026-07-09-real-complex-smoke-2-3.md"
-)
+# Default lands in the gitignored /data/ dir: this is a generated artifact of a
+# manual run, not a tracked document. Override with COMPLEX_SMOKE_REPORT.
+REAL_REPORT_PATH = ROOT / "data" / "real-complex-smoke-2-3.md"
 SPEC = {
     "raw_input": "修复 Python SyntaxError，并通过测试验证修复",
     "domain": "agentic_swe",

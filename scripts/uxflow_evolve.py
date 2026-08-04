@@ -23,8 +23,9 @@ load_dotenv()
 
 from uxflow_paths import resolve_db_path, ensure_parent  # noqa: E402
 from uxflow_runtime import (  # noqa: E402
+    backend_banner,
     make_embedder,
-    require_llm_config,
+    make_gateway,
     resolve_models,
 )
 
@@ -37,7 +38,7 @@ def _iso_now() -> str:
 
 async def _amain(args) -> int:
     try:
-        from llm_gateway import LLMGateway, GatewayConfig
+        from llm_gateway import GatewayConfig
         from module0 import QueryCompiler, Taxonomy
         from module0.sqlite_taxonomy import SqliteTaxonomyStore
         from module1.sqlite_store import SqliteSliceStore
@@ -55,17 +56,19 @@ async def _amain(args) -> int:
         queue = SqliteBackfillQueue(db_path)
 
         emb = make_embedder()
-        base, key = require_llm_config()
         default_compile, default_judge = resolve_models()
         # --model, when given, overrides both slots; otherwise each slot keeps
         # its own default (compile needs strict JSON, judge is high-volume).
         compile_model = args.model or default_compile
         judge_model = args.model or default_judge
-        config = GatewayConfig(
-            litellm_base=base,
-            litellm_key=key,
-            transport_stuck_seconds=0)
-        async with LLMGateway(config) as gw:
+        print(backend_banner())
+        gw_cm = make_gateway(
+            lambda base, key: GatewayConfig(
+                litellm_base=base,
+                litellm_key=key,
+                transport_stuck_seconds=0)
+        )
+        async with gw_cm as gw:
             compiler = QueryCompiler(gateway=gw, taxonomy=taxonomy_store.snapshot(),
                                      model=compile_model, embedding_model=emb)
             await compiler.compile(args.query)

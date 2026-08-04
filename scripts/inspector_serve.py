@@ -18,11 +18,12 @@ load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
 
 import uvicorn  # noqa: E402
 
-from llm_gateway import LLMGateway, GatewayConfig  # noqa: E402
+from llm_gateway import GatewayConfig  # noqa: E402
 from module0 import QueryCompiler, Taxonomy  # noqa: E402
 from uxflow_runtime import (  # noqa: E402
+    backend_banner,
     make_embedder,
-    require_llm_config,
+    make_gateway,
     resolve_models,
 )
 from module1.pipeline import TrajectoryPipeline, PipelineConfig  # noqa: E402
@@ -52,13 +53,13 @@ def build_app():
     db = resolve_db_path()
     ensure_parent(db)
 
-    base, key = require_llm_config()
-    gw_config = GatewayConfig(
-        litellm_base=base,
-        litellm_key=key,
-        transport_stuck_seconds=0,
+    gateway = make_gateway(  # long-lived; entered on startup
+        lambda base, key: GatewayConfig(
+            litellm_base=base,
+            litellm_key=key,
+            transport_stuck_seconds=0,
+        )
     )
-    gateway = LLMGateway(gw_config)  # long-lived; entered on startup
 
     compiler = QueryCompiler(
         gateway=gateway, taxonomy=taxonomy, model=compile_model, embedding_model=emb)
@@ -107,4 +108,5 @@ def build_app():
 
 
 if __name__ == "__main__":
+    print(backend_banner())
     uvicorn.run(build_app(), host="127.0.0.1", port=8000)

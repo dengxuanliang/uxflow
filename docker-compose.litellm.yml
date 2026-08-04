@@ -1,0 +1,26 @@
+# Minimal LiteLLM proxy for local UXFlow development.
+#
+# This file only stands up the LLM proxy UXFlow depends on — it does not run
+# UXFlow itself (hence the explicit -f name rather than docker-compose.yml).
+#
+#   cp litellm.config.example.yaml litellm.config.yaml   # then edit upstreams
+#   export OPENAI_API_KEY=sk-...
+#   docker compose -f docker-compose.litellm.yml up -d
+#
+# Port 4000 matches the LITELLM_BASE default in .env.example, so no extra wiring.
+
+services:
+  litellm:
+    # Pinned deliberately: LiteLLM ships weekly, and 1.82.7/1.82.8 were pulled
+    # after a supply-chain incident. Bump this consciously, not implicitly.
+    image: litellm/litellm:1.95.0
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm.config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:?set OPENAI_API_KEY before starting}
+      # Must equal LITELLM_KEY in your .env — that is what UXFlow sends.
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY:-sk-local-dev}
+    restart: unless-stopped

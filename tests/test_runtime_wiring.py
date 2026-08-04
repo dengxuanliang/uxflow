@@ -102,10 +102,18 @@ def test_entry_scripts_do_not_hardcode_local_embedder():
 
 
 def test_entry_scripts_guard_llm_config():
-    """An empty key must fail up front, not as 'Call 1 failed after retries'."""
+    """An empty key must fail up front, not as 'Call 1 failed after retries'.
+
+    Validation now lives inside make_gateway()'s real path, so entry scripts
+    satisfy this by routing through it rather than calling require_llm_config
+    themselves — building an LLMGateway directly would bypass the check.
+    """
     for name in ZERO_ML_ENTRY_SCRIPTS:
         text = (SCRIPTS / name).read_text(encoding="utf-8")
-        assert "require_llm_config" in text, (
+        assert ("make_gateway" in text or "require_llm_config" in text), (
             f"{name} must validate LLM config before building the gateway")
+        assert "LLMGateway(" not in text, (
+            f"{name} must build its gateway via make_gateway(), which enforces "
+            "config validation and honours UXFLOW_LLM_BACKEND")
         assert 'os.environ.get("LITELLM_KEY"' not in text, (
             f"{name} should read the key via require_llm_config(), not directly")

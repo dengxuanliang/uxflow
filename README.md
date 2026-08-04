@@ -22,6 +22,20 @@ UXFlow curates SFT (supervised fine-tuning) training data by selecting high-qual
 - Linux or macOS (Windows untested)
 - A [LiteLLM](https://docs.litellm.ai/) proxy endpoint (OpenAI-compatible) for LLM calls
 
+## Set up the LLM proxy
+
+UXFlow makes every LLM call through a LiteLLM proxy. If you already run one, skip to Install. Otherwise a minimal local proxy is bundled:
+
+```bash
+cp litellm.config.example.yaml litellm.config.yaml   # then edit the upstream models
+export OPENAI_API_KEY=sk-...                         # your provider key
+docker compose -f docker-compose.litellm.yml up -d
+```
+
+Then in `.env` set `LITELLM_BASE=http://localhost:4000/v1` and `LITELLM_KEY=sk-local-dev` (matching `LITELLM_MASTER_KEY` in the compose file).
+
+The two `model_name` entries in `litellm.config.example.yaml` must match what UXFlow requests — `gpt-5.5` for compilation and `gpt-4o-mini` for judging — or calls fail as `Call 1 failed after retries`. To use different names, point `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` at them instead.
+
 ## Install (from source)
 
 UXFlow is installed from source (it is not published to PyPI). We recommend [uv](https://github.com/astral-sh/uv).
@@ -58,6 +72,19 @@ uv run python scripts/inspector_serve.py
 ```
 
 The smoke script loads `fixtures/taxonomy_v0.json` + `fixtures/trajectories/sample_01.jsonl`, runs module 0 → 1 → 2 → 3 → 0.5 end-to-end, and prints intermediate results at each stage for human inspection.
+
+### Try it with no proxy at all
+
+To see the pipeline run before setting up LiteLLM, switch both backends to fake:
+
+```bash
+UXFLOW_LLM_BACKEND=fake UXFLOW_EMBED_BACKEND=fake \
+  uv run python scripts/e2e_smoke.py "写入py文件有语法错误"
+```
+
+This needs no proxy, no key and no ML dependencies. **The LLM responses are fixed replays, not model output** — the run proves the five stages wire together, and says nothing about whether the selected trajectories are any good. Every fake run prints a banner naming both backends, at startup and again after the results; the Inspector UI shows a standing warning for the same reason.
+
+`UXFLOW_LLM_BACKEND` defaults to `real`, which fails loudly when `LITELLM_BASE`/`LITELLM_KEY` are missing rather than quietly falling back to replays.
 
 > **Embedding default:** both scripts default to `UXFLOW_EMBED_BACKEND=fake`, which needs no ML dependencies. Fake vectors are deterministic but **semantically meaningless** — they let you verify the pipeline runs, not that its picks are good. For real curation, switch to a real backend:
 >

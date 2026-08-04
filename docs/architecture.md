@@ -51,4 +51,4 @@ module0 ── ProblemSpec ──┐
 
 ## Configuration
 
-All runtime config is env-driven; see [`.env.example`](../../.env.example) for the full list with defaults. The two required variables are `LITELLM_BASE` and `LITELLM_KEY` — UXFlow routes every LLM call through a LiteLLM proxy.
+All runtime config is env-driven; see [`.env.example`](../.env.example) for the full list with defaults. The two required variables are `LITELLM_BASE` and `LITELLM_KEY` — UXFlow routes every LLM call through a LiteLLM proxy.

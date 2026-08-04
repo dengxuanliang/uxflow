@@ -22,6 +22,20 @@ UXFlow 通过筛选高质量的 SWE agent 轨迹切片来治理 SFT（监督微�
 - Linux 或 macOS（Windows 未经测试）
 - 一个 [LiteLLM](https://docs.litellm.ai/) 代理端点（OpenAI 兼容）用于 LLM 调用
 
+## 搭建 LLM 代理
+
+UXFlow 的所有 LLM 调用都经由 LiteLLM 代理。如果你已有一个,可直接跳到"安装";否则仓库内置了一份最小配置:
+
+```bash
+cp litellm.config.example.yaml litellm.config.yaml   # 然后编辑上游模型
+export OPENAI_API_KEY=sk-...                         # 你的 provider 密钥
+docker compose -f docker-compose.litellm.yml up -d
+```
+
+随后在 `.env` 中设置 `LITELLM_BASE=http://localhost:4000/v1` 与 `LITELLM_KEY=sk-local-dev`（与 compose 文件里的 `LITELLM_MASTER_KEY` 一致）。
+
+`litellm.config.example.yaml` 中的两个 `model_name` 必须与 UXFlow 请求的名字一致 —— 编译用 `gpt-5.5`、裁决用 `gpt-4o-mini` —— 否则调用会以 `Call 1 failed after retries` 失败。若要改用其它名字,请把 `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` 指向它们。
+
 ## 安装（从源码）
 
 UXFlow 从源码安装（未发布到 PyPI）。推荐使用 [uv](https://github.com/astral-sh/uv)。
@@ -58,6 +72,19 @@ uv run python scripts/inspector_serve.py
 ```
 
 该 smoke 脚本加载 `fixtures/taxonomy_v0.json` + `fixtures/trajectories/sample_01.jsonl`，端到端运行 module 0 → 1 → 2 → 3 → 0.5，并在每个阶段打印中间结果供人工检查。
+
+### 无需代理即可试跑
+
+在搭建 LiteLLM 之前，可以把两个后端都切到 fake 先跑一遍:
+
+```bash
+UXFLOW_LLM_BACKEND=fake UXFLOW_EMBED_BACKEND=fake \
+  uv run python scripts/e2e_smoke.py "写入py文件有语法错误"
+```
+
+无需代理、无需密钥、无需 ML 依赖。**LLM 响应为固定回放，不是模型输出**——此次运行只证明五级流水线能连通，不代表选出的轨迹有意义。每次 fake 运行都会在启动时和结束时打印横幅标明两个后端的状态；Inspector UI 也会常驻显示相同警告。
+
+`UXFLOW_LLM_BACKEND` 默认值为 `real`——缺少 `LITELLM_BASE`/`LITELLM_KEY` 时会直接报错，绝不会静默降级为回放。
 
 > **嵌入后端默认值:** 两个脚本默认 `UXFLOW_EMBED_BACKEND=fake`,无需任何 ML 依赖。fake 向量是确定性的但**语义无意义**——它只能验证流水线跑得通,不能验证选出的结果好不好。真实治理请切到真实后端:
 >

@@ -8,6 +8,8 @@ build/
 .venv/
 venv/
 .env
+# Filled-in copy of litellm.config.example.yaml — points at real upstreams.
+litellm.config.yaml
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/

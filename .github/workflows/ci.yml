@@ -25,3 +25,29 @@ jobs:
         run: uv run ruff check
       - name: Pytest (pure-logic)
         run: uv run pytest -m "not requires_model" -q
+
+  # Reproduces the "fresh clone" user experience. One OS/Python combo is enough:
+  # this guards entry-point wiring, not cross-platform logic (that's `test`).
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: "3.11"
+      - name: Sync dev + service deps (no torch)
+        run: uv sync --extra dev --extra service
+      # Missing LLM config must fail loudly, never hang or silently fake a run.
+      # The leading `!` asserts a NON-zero exit — without it this tests nothing.
+      - name: Entry scripts fail fast without LLM config
+        run: |
+          for s in e2e_smoke inspector_serve check_model_split; do
+            ! uv run python scripts/$s.py "smoke" || { echo "$s should exit non-zero"; exit 1; }
+          done
+      # The clone-and-run promise from the README, enforced.
+      - name: End-to-end on fake backends
+        env:
+          UXFLOW_LLM_BACKEND: fake
+          UXFLOW_EMBED_BACKEND: fake
+        run: uv run python scripts/e2e_smoke.py "写入py文件有语法错误"
