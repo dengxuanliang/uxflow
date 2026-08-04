@@ -12,6 +12,24 @@ UXFlow is installed from source. We recommend [uv](https://github.com/astral-sh/
 uv sync --extra dev            # or: pip install -e ".[dev]"
 ```
 
+### Editing the top-level modules
+
+Most of the tree is an editable install: changes under `src/module0/`,
+`src/llm_gateway/`, `src/service/` and friends take effect immediately.
+
+Three files are the exception. `src/uxflow_runtime.py`, `src/uxflow_paths.py`
+and `scripts/uxflow_evolve.py` are `force-include`d in `pyproject.toml`, which
+**copies** them into `site-packages` rather than linking them. After editing
+one, a plain `uv sync` will not pick up the change — it sees an unchanged
+`pyproject.toml` and does nothing, so you keep importing the stale copy:
+
+```bash
+uv sync --extra dev --extra service --reinstall-package uxflow
+```
+
+The symptom is an `ImportError` for a symbol you just added, or an edit that
+appears to have no effect at all.
+
 ## Architecture
 
 For a module map and data-flow diagram, see [`docs/architecture.md`](docs/architecture.md). The module 0 ↔ module 1 contract is frozen in [`docs/superpowers/specs/interface-contract.md`](docs/superpowers/specs/interface-contract.md).

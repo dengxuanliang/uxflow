@@ -12,6 +12,22 @@ UXFlow 从源码安装。推荐使用 [uv](https://github.com/astral-sh/uv)。
 uv sync --extra dev            # or: pip install -e ".[dev]"
 ```
 
+### 修改顶层模块时的注意事项
+
+绝大部分代码是可编辑安装：改动 `src/module0/`、`src/llm_gateway/`、
+`src/service/` 等目录下的文件会立即生效。
+
+但有三个文件是例外。`src/uxflow_runtime.py`、`src/uxflow_paths.py` 和
+`scripts/uxflow_evolve.py` 在 `pyproject.toml` 里是 `force-include`，会被
+**拷贝**进 `site-packages` 而非链接。改完其中任何一个后，普通的 `uv sync`
+不会同步 —— 它看到 `pyproject.toml` 没变就什么都不做，于是你导入的仍是旧副本：
+
+```bash
+uv sync --extra dev --extra service --reinstall-package uxflow
+```
+
+典型症状是：刚加的符号报 `ImportError`，或者改动看起来完全没生效。
+
 ## 架构
 
 模块地图与数据流图见 [`docs/architecture.md`](docs/architecture.md)。模块 0 ↔ 模块 1 的接口契约冻结于 [`docs/superpowers/specs/interface-contract.md`](docs/superpowers/specs/interface-contract.md)。
