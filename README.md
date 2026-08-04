@@ -99,8 +99,13 @@ ${EDITOR:-vi} litellm.config.yaml          # point litellm_params.model at your 
 export OPENAI_API_KEY=sk-...               # your provider key
 export LITELLM_MASTER_KEY=sk-local-dev
 
-uvx --from 'litellm[proxy]==1.95.0' litellm --config litellm.config.yaml --port 4000
+uvx --from 'litellm[proxy]==1.95.0' --with 'fastapi<0.140.7' \
+  litellm --config litellm.config.yaml --port 4000
 ```
+
+> The `fastapi<0.140.7` pin is required: 0.140.7 removed `get_flat_dependant`, which litellm's proxy still imports, and litellm declares no upper bound. Without the pin the proxy dies at startup — and misleadingly, as `ModuleNotFoundError: No module named 'proxy_server'`, because its CLI swallows the real ImportError. To see the actual cause, run `python -c "import litellm.proxy.proxy_server"`.
+>
+> A `failed to fetch remote model cost map ... falling back to local backup` warning is harmless — litellm could not reach its pricing table and used the bundled copy. Silence it with `export LITELLM_LOCAL_MODEL_COST_MAP=True`.
 
 **Option B — via Docker:**
 
@@ -237,6 +242,8 @@ UXFlow itself needs no external services beyond your LLM endpoint, but three of 
 | `uv` provisioning Python | GitHub Releases | `export UV_PYTHON_INSTALL_MIRROR=<a GitHub release proxy>`, or install a Python ≥3.11 yourself |
 | `UXFLOW_EMBED_BACKEND=local` | HuggingFace | `export HF_ENDPOINT=https://hf-mirror.com` |
 | `docker compose ... litellm` | Docker Hub | use **Option A** in [step 1](#step-1--start-an-llm-proxy) — it goes through PyPI instead |
+
+If a TLS-intercepting proxy sits in front of you, Docker fails with `x509: certificate signed by unknown authority` even when `curl` to the same host succeeds — curl trusts the proxy's CA from the system store, the Docker daemon does not. Either install that CA for the daemon and restart it, or take Option A.
 
 Leave `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` commented out until the Qwen model is actually on disk — setting them early blocks the very download they're meant to skip.
 

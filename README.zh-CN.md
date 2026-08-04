@@ -99,8 +99,13 @@ ${EDITOR:-vi} litellm.config.yaml          # 把 litellm_params.model 指向你�
 export OPENAI_API_KEY=sk-...               # 你的 provider 密钥
 export LITELLM_MASTER_KEY=sk-local-dev
 
-uvx --from 'litellm[proxy]==1.95.0' litellm --config litellm.config.yaml --port 4000
+uvx --from 'litellm[proxy]==1.95.0' --with 'fastapi<0.140.7' \
+  litellm --config litellm.config.yaml --port 4000
 ```
+
+> `fastapi<0.140.7` 这个约束是**必需的**：0.140.7 移除了 `get_flat_dependant`，而 litellm 的 proxy 仍在 import 它，且 litellm 自己没声明上限。不加约束的话代理会在启动时直接挂掉 —— 而且报错具有误导性，显示为 `ModuleNotFoundError: No module named 'proxy_server'`，因为它的 CLI 把真正的 ImportError 吞掉了。想看真实原因，执行 `python -c "import litellm.proxy.proxy_server"`。
+>
+> 若看到 `failed to fetch remote model cost map ... falling back to local backup` 警告，**无害** —— litellm 没能联网取到价格表，改用了内置副本。想消掉它：`export LITELLM_LOCAL_MODEL_COST_MAP=True`。
 
 **方式 B —— 用 Docker:**
 
@@ -237,6 +242,8 @@ UXFlow 本身除了你的 LLM 端点之外不依赖任何外部服务，但它�
 | `uv` 准备 Python 解释器 | GitHub Releases | `export UV_PYTHON_INSTALL_MIRROR=<GitHub release 代理>`，或自行装一个 ≥3.11 的 Python |
 | `UXFLOW_EMBED_BACKEND=local` | HuggingFace | `export HF_ENDPOINT=https://hf-mirror.com` |
 | `docker compose ... litellm` | Docker Hub | 改用[步骤 1](#步骤-1--起一个-llm-代理) 的**方式 A** —— 它走 PyPI |
+
+如果你前面有一层做 TLS 拦截的代理，Docker 会报 `x509: certificate signed by unknown authority`，**即使 `curl` 访问同一个域名是通的** —— curl 从系统信任库里认得那个代理的 CA，Docker daemon 认不得。要么把该 CA 装进 daemon 的信任库并**重启 daemon**（这一步最容易漏），要么直接走方式 A。
 
 在 Qwen 模型真正落盘之前，请保持 `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` 处于注释状态 —— 过早开启会阻断它们本想跳过的那次下载。
 
