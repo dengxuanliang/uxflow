@@ -146,14 +146,22 @@ def test_stats_reports_counts():
     client, _ = _client(deps=deps)
     r = client.get("/stats")
     assert r.status_code == 200
-    assert r.json() == {"problems": 3, "trajectories": 7, "signatures": 5}
+    body = r.json()
+    # Subset assertion: /stats also carries backend disclosure fields, which are
+    # covered in tests/test_fake_backend_disclosure.py.
+    assert body["problems"] == 3
+    assert body["trajectories"] == 7
+    assert body["signatures"] == 5
 
 
 def test_stats_defensive_with_bare_object_deps():
     client, _ = _client()  # deps = object()
     r = client.get("/stats")
     assert r.status_code == 200
-    assert r.json() == {"problems": 0, "trajectories": 0, "signatures": 0}
+    body = r.json()
+    assert body["problems"] == 0
+    assert body["trajectories"] == 0
+    assert body["signatures"] == 0
 
 
 def test_trajectory_persistent_fallback():

@@ -17,11 +17,12 @@ import pathlib
 from dotenv import load_dotenv
 load_dotenv(pathlib.Path(__file__).parent.parent / ".env")
 
-from llm_gateway import LLMGateway, GatewayConfig  # noqa: E402  (import after load_dotenv)
+from llm_gateway import GatewayConfig  # noqa: E402  (import after load_dotenv)
 from module0 import QueryCompiler, Taxonomy  # noqa: E402
 from uxflow_runtime import (  # noqa: E402
+    backend_banner,
     make_embedder,
-    require_llm_config,
+    make_gateway,
     resolve_models,
 )
 from module1.pipeline import TrajectoryPipeline, PipelineConfig  # noqa: E402
@@ -89,20 +90,22 @@ async def main():
     print(f"⏳ 构建 embedding backend ({backend})...")
     emb = make_embedder()
     print(f"✓ Embedding 就绪 (dim={emb.dimension})")
-    if backend == "fake":
-        print("  ⚠️  fake backend：向量为确定性哈希，仅用于跑通流程，语义无意义。")
+
+    # Disclose BOTH backends up front — see uxflow_runtime.backend_banner.
+    print(backend_banner())
 
     # ── 2. Gateway + Module 0 ────────────────────────────────────────────
     taxonomy = Taxonomy.load(taxonomy_path)
 
-    base, key = require_llm_config()
-    config = GatewayConfig(
-        litellm_base=base,
-        litellm_key=key,
-        transport_stuck_seconds=0,
+    gw_cm = make_gateway(
+        lambda base, key: GatewayConfig(
+            litellm_base=base,
+            litellm_key=key,
+            transport_stuck_seconds=0,
+        )
     )
 
-    async with LLMGateway(config) as gw:
+    async with gw_cm as gw:
         # ── Module 0: Compile ProblemSpec ─────────────────────────────────
         _print_section("模块0: 编译 ProblemSpec")
         print(f"输入: \"{raw_input}\"")
@@ -357,7 +360,12 @@ async def main():
 
         # ── Stats ────────────────────────────────────────────────────────
         _print_section("Gateway 统计")
-        print(f"  {gw.http_stats}")
+        # FakeGateway has no http_stats — it never touches the network.
+        print(f"  {getattr(gw, 'http_stats', 'fake backend: no HTTP traffic')}")
+
+    # Repeat the disclosure at the end: the startup banner has scrolled far off
+    # screen by now, and this is the moment results are read.
+    print(backend_banner())
 
 
 if __name__ == "__main__":

@@ -143,6 +143,13 @@ button#btn-search:disabled, button#btn-ingest:disabled { opacity: .5; cursor: no
   color: #adbac7; font-family: var(--mono); font-size: 11px; letter-spacing: .3px;
 }
 
+/* Fake-backend disclosure：终端横幅在浏览器里看不到，所以这条常驻不可关闭。 */
+.fake-banner {
+  background: #4d3800; border: 1px solid #9e7700; border-radius: 4px;
+  color: #ffd45e; font-family: var(--mono); font-size: 11px;
+  padding: 5px 9px; margin-bottom: 6px; line-height: 1.5;
+}
+
 /* 库信息行：左"库中…"，右"最终入选…"，同排左右分布 */
 .db-info-row {
   display: flex; align-items: baseline; justify-content: space-between;

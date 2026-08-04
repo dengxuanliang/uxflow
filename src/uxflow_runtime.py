@@ -12,6 +12,8 @@ import os
 
 __all__ = [
     "make_embedder",
+    "make_gateway",
+    "backend_banner",
     "require_llm_config",
     "resolve_models",
     "DEFAULT_COMPILE_MODEL",
@@ -26,6 +28,9 @@ DEFAULT_JUDGE_MODEL = "gpt-4o-mini"
 
 _EMBED_ENV = "UXFLOW_EMBED_BACKEND"
 _VALID_BACKENDS = ("fake", "local", "api")
+
+_LLM_ENV = "UXFLOW_LLM_BACKEND"
+_VALID_LLM_BACKENDS = ("real", "fake")
 
 
 def make_embedder(backend: str | None = None):
@@ -103,3 +108,84 @@ def resolve_models() -> tuple[str, str]:
         os.environ.get("MODULE0_TEST_MODEL", DEFAULT_JUDGE_MODEL),
     )
     return compile_model, judge_model
+
+
+def llm_backend() -> str:
+    """Return the selected LLM backend ('real' | 'fake'). Defaults to 'real'.
+
+    Defaulting to 'real' is deliberate: a missing config then fails loudly via
+    require_llm_config() instead of silently degrading to scripted replies that
+    look like a successful run.
+    """
+    choice = (os.environ.get(_LLM_ENV) or "real").strip().lower()
+    if choice not in _VALID_LLM_BACKENDS:
+        raise SystemExit(
+            f"unknown {_LLM_ENV}={choice!r}; expected one of {_VALID_LLM_BACKENDS}"
+        )
+    return choice
+
+
+def backend_banner() -> str:
+    """Render the startup disclosure for the active backends.
+
+    Always reports BOTH backends, even when only one is fake: the easy mistake
+    is switching the LLM to real and forgetting embedding (or vice versa), which
+    a single-backend message would hide. On an all-real run this prints a plain
+    confirmation, so "no warning shown" is itself a meaningful signal rather
+    than an absence of information.
+    """
+    llm = llm_backend()
+    embed = (os.environ.get(_EMBED_ENV) or "fake").strip().lower()
+
+    if llm == "real" and embed not in ("fake",):
+        return f"✓ LLM: real   ✓ Embedding: {embed}"
+
+    fake_parts = []
+    if llm == "fake":
+        fake_parts.append("LLM 为固定回放，不是真实模型输出")
+    if embed == "fake":
+        fake_parts.append("Embedding 向量为确定性哈希，语义无意义")
+
+    def _pad(s: str, width=62) -> str:
+        """Pad `s` to `width` visible width, accounting for wide CJK chars."""
+        vis = sum(2 if ord(c) > 0x3000 else 1 for c in s)
+        return s + " " * (width - vis)
+
+    lines = [
+        "╔════════════════════════════════════════════════════════════════╗",
+        "║  ⚠️  FAKE 后端 — 本次运行的结果不可用于真实数据筛选             ║",
+        "╠════════════════════════════════════════════════════════════════╣",
+        f"║  {_pad(f'{_LLM_ENV}={llm}')} ║",
+        f"║  {_pad(f'{_EMBED_ENV}={embed}')} ║",
+    ]
+    for part in fake_parts:
+        lines.append(f"║  {_pad('· ' + part)} ║")
+    lines.extend([
+        f"║  {_pad('仅验证流水线能跑通，不代表选出的轨迹有意义。')} ║",
+        f"║  {_pad('')} ║",
+        f"║  {_pad('切真实：.env 设 LITELLM_BASE/LITELLM_KEY，并')} ║",
+        f"║  {_pad(f'         {_LLM_ENV}=real {_EMBED_ENV}=local')} ║",
+        "╚════════════════════════════════════════════════════════════════╝",
+    ])
+    return "\n".join(lines)
+
+
+def make_gateway(config_factory=None):
+    """Build the LLM gateway from UXFLOW_LLM_BACKEND (real | fake).
+
+    'real' (the default) validates config and returns a live LLMGateway;
+    'fake' returns a scripted FakeGateway that needs no proxy. Both are async
+    context managers, so callers treat them identically.
+
+    `config_factory` receives (base, key) and returns a GatewayConfig, letting
+    each entry point keep its own tuning (e.g. transport_stuck_seconds=0).
+    """
+    if llm_backend() == "fake":
+        from llm_gateway.fake import FakeGateway
+        return FakeGateway()
+
+    from llm_gateway import GatewayConfig, LLMGateway
+    base, key = require_llm_config()
+    if config_factory is not None:
+        return LLMGateway(config_factory(base, key))
+    return LLMGateway(GatewayConfig(litellm_base=base, litellm_key=key))

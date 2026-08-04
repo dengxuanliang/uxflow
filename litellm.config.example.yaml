@@ -1,0 +1,32 @@
+# LiteLLM proxy config — copy to `litellm.config.yaml` and edit.
+#   cp litellm.config.example.yaml litellm.config.yaml
+#
+# UXFlow routes every LLM call through this proxy. The two `model_name` values
+# below are NOT arbitrary: they must match UXFlow's defaults exactly, or calls
+# fail deep inside module0 as the misleading "Call 1 failed after retries".
+#   model_name: gpt-5.5      <- uxflow_runtime.DEFAULT_COMPILE_MODEL
+#   model_name: gpt-4o-mini  <- uxflow_runtime.DEFAULT_JUDGE_MODEL
+# To use different names, set UXFLOW_COMPILE_MODEL / UXFLOW_JUDGE_MODEL in .env
+# to match whatever you name them here.
+#
+# `model_name` is the alias UXFlow requests; `litellm_params.model` is the real
+# upstream it routes to. Edit the latter to point at your provider.
+
+model_list:
+  # Compiles the ProblemSpec in module0. Low-volume but high-leverage: it must
+  # follow strict JSON output, so keep a strong instruction-following model here.
+  - model_name: gpt-5.5
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Judges trajectory slices in module1 — the highest-volume call by far.
+  # A cheaper model is the intended trade-off.
+  - model_name: gpt-4o-mini
+    litellm_params:
+      model: openai/gpt-4o-mini
+      api_key: os.environ/OPENAI_API_KEY
+
+general_settings:
+  # Becomes the LITELLM_KEY value UXFlow authenticates with (see .env).
+  master_key: os.environ/LITELLM_MASTER_KEY

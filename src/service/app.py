@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import pathlib
 import tempfile
 from typing import Any, Callable
@@ -265,8 +266,13 @@ def create_app(
                         if getattr(deps, "trajectory_store", None) else 0)
         signatures = getattr(getattr(deps, "pipeline", None), "_store", None)
         sig_count = getattr(signatures, "size", 0) if signatures is not None else 0
+        # Backends ride along on /stats (already polled by the UI) so the web
+        # client can show a standing fake-backend warning: the terminal banner
+        # from inspector_serve.py is invisible to anyone using the browser.
         return {"problems": problems, "trajectories": trajectories,
-                "signatures": sig_count}
+                "signatures": sig_count,
+                "llm_backend": os.environ.get("UXFLOW_LLM_BACKEND", "real").lower(),
+                "embed_backend": os.environ.get("UXFLOW_EMBED_BACKEND", "fake").lower()}
 
     @app.post("/runs/{run_id}/cancel")
     async def cancel_run(run_id: str):

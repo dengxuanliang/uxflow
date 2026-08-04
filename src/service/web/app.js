@@ -246,7 +246,27 @@ async function loadStats() {
     const dbName = state.currentDbName || "当前库";
     $("stats-bar").textContent =
       `【${dbName}】中 ${s.problems} 问题 · ${s.trajectories} 轨迹 · ${s.signatures} 切片`;
+    renderFakeBanner(s);
   } catch (_) { /* stats are best-effort */ }
+}
+
+// 后端披露：任一后端为 fake 时常驻告警。两个后端都回显 —— 最容易踩的是
+// 切了 LLM 忘了切 embedding 这种半真半假状态，只报一个会掩盖它。
+function renderFakeBanner(s) {
+  const el = $("fake-banner");
+  if (!el) return;
+  const llmFake = s.llm_backend === "fake";
+  const embedFake = s.embed_backend === "fake";
+  if (!llmFake && !embedFake) { el.classList.add("hidden"); return; }
+
+  const parts = [];
+  if (llmFake) parts.push("LLM 为固定回放，不是真实模型输出");
+  if (embedFake) parts.push("Embedding 向量为确定性哈希，语义无意义");
+  el.textContent =
+    `⚠️ FAKE 后端（UXFLOW_LLM_BACKEND=${s.llm_backend} · ` +
+    `UXFLOW_EMBED_BACKEND=${s.embed_backend}）—— ${parts.join("；")}。` +
+    `本次结果仅验证流水线跑通，不可用于真实数据筛选。`;
+  el.classList.remove("hidden");
 }
 
 function showDedupBanner(dedup) {

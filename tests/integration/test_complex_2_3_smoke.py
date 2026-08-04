@@ -6,9 +6,9 @@ from tests.integration.complex_smoke_runner import (
 )
 
 
-async def test_complex_module_2_3_smoke_report():
+async def test_complex_module_2_3_smoke_report(tmp_path):
     result = await run_complex_smoke()
-    write_complex_smoke_report(result)
+    write_complex_smoke_report(result, tmp_path / "complex-smoke-report.md")
 
     assert result.trajectory_count == 20
     assert result.scored_count >= 12

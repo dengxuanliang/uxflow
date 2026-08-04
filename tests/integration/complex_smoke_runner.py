@@ -11,7 +11,6 @@ from module3.selection import SelectionConfig
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 FIXTURE_PATH = ROOT / "fixtures" / "trajectories" / "smoke_20.jsonl"
-REPORT_PATH = ROOT / "docs" / "superpowers" / "reports" / "2026-07-09-complex-smoke-2-3.md"
 
 SPEC = {
     "raw_input": "修复 Python SyntaxError，并通过测试验证修复",
@@ -183,7 +182,13 @@ async def run_complex_smoke() -> ComplexSmokeResult:
     )
 
 
-def write_complex_smoke_report(result: ComplexSmokeResult, path: pathlib.Path = REPORT_PATH) -> pathlib.Path:
+def write_complex_smoke_report(result: ComplexSmokeResult, path: pathlib.Path) -> pathlib.Path:
+    """Write the human-readable report to `path`.
+
+    `path` is required on purpose: a default pointing into the repo let this
+    write land in a gitignored directory, where nobody ever saw the output.
+    Callers must name the destination (tests pass pytest's tmp_path).
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(result.report)
     return path
