@@ -32,7 +32,7 @@ cd uxflow
 uv sync --extra dev --extra service
 ```
 
-核心安装非常轻量（httpx、datasketch、numpy），**不带任何 ML 依赖**。`service` extra 额外拉取 FastAPI + uvicorn 用于 Inspector UI。
+核心安装非常轻量（httpx、datasketch、numpy、python-dotenv），**不带任何 ML 依赖**。`service` extra 额外拉取 FastAPI + uvicorn 用于 Inspector UI。
 
 ---
 
@@ -88,7 +88,7 @@ UXFLOW_LLM_BACKEND=fake UXFLOW_EMBED_BACKEND=fake \
 
 ### 步骤 1 —— 起一个 LLM 代理
 
-UXFlow 的所有 LLM 调用都经由 LiteLLM 代理。若你已有一个，跳过本步。
+UXFlow 的 LLM 调用走标准 OpenAI 兼容的 `/chat/completions` 端点。可经 LiteLLM 代理接入（方式 A/B），也可直连供应商（方式 C）。若你已有 LiteLLM 代理，跳过本步。
 
 **方式 A —— 用 uv（不依赖 Docker）:**
 
@@ -119,6 +119,10 @@ docker compose -f docker-compose.litellm.yml up -d
 
 > ⚠️ **两个 `model_name` 必须与 UXFlow 请求的名字一致** —— 编译用 `gpt-5.5`、裁决用 `gpt-4o-mini`。对不上会在很久之后以误导性的 `Call 1 failed after retries` 暴露。若要用别的名字，请把 `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` 设成对应值。
 
+**方式 C —— 直连供应商（不跑 LiteLLM 代理）:**
+
+若你的供应商本身是 OpenAI 兼容（OpenAI / DeepSeek / Moonshot / OpenRouter 等），跳过本步的代理，直接让 `.env` 指向供应商——无需 docker/uvx。此方式下 `LITELLM_KEY` 就填供应商的 key（不是 `sk-local-dev`），并必须用 `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` 覆盖默认别名 `gpt-5.5` / `gpt-4o-mini`（多数供应商没有 `gpt-5.5`）。具体见[步骤 2](#步骤-2--配置-env) 的直连列。
+
 ### 步骤 2 —— 配置 `.env`
 
 ```bash
@@ -134,6 +138,15 @@ cp .env.example .env
 | `UXFLOW_LLM_BACKEND` | `real` | 已是默认值 |
 
 默认值取 `real` 是刻意的：缺少凭据时它会**直接报错**，而不是静默退化成回放。
+
+**方式 C（直连供应商）改填:**
+
+| 变量 | 值 | 说明 |
+|---|---|---|
+| `LITELLM_BASE` | `https://你的供应商/v1` | 供应商的 base URL |
+| `LITELLM_KEY` | 你的供应商 key | 即供应商 API key，非 `sk-local-dev` |
+| `UXFLOW_COMPILE_MODEL` | 供应商真实模型名 | 覆盖别名 `gpt-5.5`（编译，需严格 JSON） |
+| `UXFLOW_JUDGE_MODEL` | 供应商真实模型名 | 覆盖别名 `gpt-4o-mini`（裁决） |
 
 ### 步骤 3 —— 验证代理确实能答
 
