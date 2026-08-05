@@ -88,9 +88,13 @@ UXFLOW_LLM_BACKEND=fake UXFLOW_EMBED_BACKEND=fake \
 
 ### 步骤 1 —— 起一个 LLM 代理
 
-UXFlow 的 LLM 调用走标准 OpenAI 兼容的 `/chat/completions` 端点。可经 LiteLLM 代理接入（方式 A/B），也可直连供应商（方式 C）。若你已有 LiteLLM 代理，跳过本步。
+UXFlow 的 LLM 调用走标准 OpenAI 兼容的 `/chat/completions` 端点。可经 LiteLLM 代理接入（方式 B/C），也可直连供应商（方式 A）。若你已有 LiteLLM 代理，跳过本步。
 
-**方式 A —— 用 uv（不依赖 Docker）:**
+**方式 A —— 直连供应商（不跑 LiteLLM 代理）:**
+
+若你的供应商本身是 OpenAI 兼容（OpenAI / DeepSeek / Moonshot / OpenRouter 等），跳过本步的代理，直接让 `.env` 指向供应商——无需 docker/uvx。此方式下 `LITELLM_KEY` 就填供应商的 key（不是 `sk-local-dev`），并必须用 `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` 覆盖默认别名 `gpt-5.5` / `gpt-4o-mini`（多数供应商没有 `gpt-5.5`）。具体见[步骤 2](#步骤-2--配置-env) 的直连列。
+
+**方式 B —— 用 uv（不依赖 Docker）:**
 
 ```bash
 cp litellm.config.example.yaml litellm.config.yaml
@@ -107,7 +111,7 @@ uvx --from 'litellm[proxy]==1.95.0' --with 'fastapi<0.140.7' \
 >
 > 若看到 `failed to fetch remote model cost map ... falling back to local backup` 警告，**无害** —— litellm 没能联网取到价格表，改用了内置副本。想消掉它：`export LITELLM_LOCAL_MODEL_COST_MAP=True`。
 
-**方式 B —— 用 Docker:**
+**方式 C —— 用 Docker:**
 
 ```bash
 cp litellm.config.example.yaml litellm.config.yaml
@@ -118,10 +122,6 @@ docker compose -f docker-compose.litellm.yml up -d
 **预期结果:** 出现 uvicorn 启动日志，监听 4000 端口。**保持它运行**，另开一个终端做后续步骤。
 
 > ⚠️ **两个 `model_name` 必须与 UXFlow 请求的名字一致** —— 编译用 `gpt-5.5`、裁决用 `gpt-4o-mini`。对不上会在很久之后以误导性的 `Call 1 failed after retries` 暴露。若要用别的名字，请把 `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` 设成对应值。
-
-**方式 C —— 直连供应商（不跑 LiteLLM 代理）:**
-
-若你的供应商本身是 OpenAI 兼容（OpenAI / DeepSeek / Moonshot / OpenRouter 等），跳过本步的代理，直接让 `.env` 指向供应商——无需 docker/uvx。此方式下 `LITELLM_KEY` 就填供应商的 key（不是 `sk-local-dev`），并必须用 `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` 覆盖默认别名 `gpt-5.5` / `gpt-4o-mini`（多数供应商没有 `gpt-5.5`）。具体见[步骤 2](#步骤-2--配置-env) 的直连列。
 
 ### 步骤 2 —— 配置 `.env`
 
@@ -139,7 +139,7 @@ cp .env.example .env
 
 默认值取 `real` 是刻意的：缺少凭据时它会**直接报错**，而不是静默退化成回放。
 
-**方式 C（直连供应商）改填:**
+**方式 A（直连供应商）改填:**
 
 | 变量 | 值 | 说明 |
 |---|---|---|
@@ -254,11 +254,81 @@ UXFlow 本身除了你的 LLM 端点之外不依赖任何外部服务，但它�
 | `uv sync` / `uvx` | PyPI | `export UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` |
 | `uv` 准备 Python 解释器 | GitHub Releases | `export UV_PYTHON_INSTALL_MIRROR=<GitHub release 代理>`，或自行装一个 ≥3.11 的 Python |
 | `UXFLOW_EMBED_BACKEND=local` | HuggingFace | `export HF_ENDPOINT=https://hf-mirror.com` |
-| `docker compose ... litellm` | Docker Hub | 改用[步骤 1](#步骤-1--起一个-llm-代理) 的**方式 A** —— 它走 PyPI |
+| `docker compose ... litellm` | Docker Hub | 改用[步骤 1](#步骤-1--起一个-llm-代理) 的**方式 B** —— 它走 PyPI |
 
-如果你前面有一层做 TLS 拦截的代理，Docker 会报 `x509: certificate signed by unknown authority`，**即使 `curl` 访问同一个域名是通的** —— curl 从系统信任库里认得那个代理的 CA，Docker daemon 认不得。要么把该 CA 装进 daemon 的信任库并**重启 daemon**（这一步最容易漏），要么直接走方式 A。
+如果你前面有一层做 TLS 拦截的代理，Docker 会报 `x509: certificate signed by unknown authority`，**即使 `curl` 访问同一个域名是通的** —— curl 从系统信任库里认得那个代理的 CA，Docker daemon 认不得。要么把该 CA 装进 daemon 的信任库并**重启 daemon**（这一步最容易漏），要么直接走方式 B。
 
 在 Qwen 模型真正落盘之前，请保持 `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` 处于注释状态 —— 过早开启会阻断它们本想跳过的那次下载。
+
+### 嵌入模型下载卡住：TLS 拦截代理的诊断与修复
+
+`model.safetensors` 卡在 0% 不动、但 `curl https://huggingface.co` 是通的——多半是前面有一层 TLS 拦截代理：它对**元数据域**（huggingface.co）放行，却对**下载域**（`*.cdn.hf.co`，权重文件走 CDN）解密重签。Python 不认代理的 CA，于是卡在握手。先诊断，确认后再修复。
+
+**诊断**
+
+```bash
+# 取下载域主机名（resolve 会 302 到 CDN）+ 代理 host:port
+CDN_HOST=$(curl -sI -o /dev/null -w '%{redirect_url}\n' \
+  https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/main/model.safetensors \
+  | sed -E 's#https?://([^/]+).*#\1#')
+echo "下载域: $CDN_HOST"   # 形如 cdn-lfs.huggingface.co / *.hf.co；为空则从卡住的下载日志里找 https://... 主机名
+PROXY=${https_proxy:-$HTTPS_PROXY}; PROXY=${PROXY#http://}; PROXY=${PROXY#https://}; PROXY=${PROXY%%/*}
+[ -n "$PROXY" ] && PROXY_FLAG=(-proxy "$PROXY") || PROXY_FLAG=()
+echo "代理: ${PROXY:-(未设，按透明拦截处理)}"
+
+# 1. 元数据域 = huggingface.co。issuer 是公共 CA（DigiCert / Let's Encrypt）→ 代理对它透传
+openssl s_client -connect huggingface.co:443 -servername huggingface.co "${PROXY_FLAG[@]}" </dev/null 2>/dev/null \
+  | openssl x509 -noout -issuer
+
+# 2. 下载域 = $CDN_HOST。issuer 不是公共 CA（自签 / 厂商 CA）→ 代理在解密下载域
+openssl s_client -connect "$CDN_HOST":443 -servername "$CDN_HOST" "${PROXY_FLAG[@]}" </dev/null 2>/dev/null \
+  | openssl x509 -noout -issuer
+```
+
+第 1 步公共 CA + 第 2 步私有厂商 CA → 确认是只对下载域解密的 TLS 拦截代理，按下面修复。（两步都是公共 CA → 不是证书问题，改用 `export HF_ENDPOINT=https://hf-mirror.com` 走镜像。）
+
+**修复：让 Python 信任代理的 CA**
+
+```bash
+# 1. 导出下载域的完整证书链（叶子证书 + 代理的自签根 CA）
+#    必须连下载域 $CDN_HOST，不是 huggingface.co（元数据域没被解密，链它拿不到代理 CA）
+mkdir -p ~/.local/share/uxflow
+CDN_HOST=$(curl -sI -o /dev/null -w '%{redirect_url}\n' \
+  https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/main/model.safetensors \
+  | sed -E 's#https?://([^/]+).*#\1#')
+PROXY=${https_proxy:-$HTTPS_PROXY}; PROXY=${PROXY#http://}; PROXY=${PROXY#https://}; PROXY=${PROXY%%/*}
+[ -n "$PROXY" ] && PROXY_FLAG=(-proxy "$PROXY") || PROXY_FLAG=()
+openssl s_client -showcerts -connect "$CDN_HOST":443 -servername "$CDN_HOST" "${PROXY_FLAG[@]}" </dev/null 2>/dev/null \
+  | sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' \
+  > ~/.local/share/uxflow/proxy-ca.pem
+
+# 2. 组合 CA 包 = 系统 CA + 代理证书链
+#    不要单独用 proxy-ca.pem —— 它只有代理的 CA，单独用会连不上普通 HTTPS 站点
+#    系统 CA：macOS 从 keychain 导，Linux 用发行版的 ca-certificates
+case "$(uname -s)" in
+  Darwin)
+    SYS_CA=~/.local/share/uxflow/sys-ca.pem
+    security find-certificate -a -p /Library/Keychains/System.keychain > "$SYS_CA"
+    security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain >> "$SYS_CA"
+    ;;
+  Linux)
+    SYS_CA=/etc/ssl/certs/ca-certificates.crt                              # Debian/Ubuntu/Fedora
+    [ -f /etc/pki/tls/certs/ca-bundle.crt ] && SYS_CA=/etc/pki/tls/certs/ca-bundle.crt   # RHEL/CentOS
+    ;;
+esac
+cat "$SYS_CA" ~/.local/share/uxflow/proxy-ca.pem > ~/.local/share/uxflow/combined-ca.pem
+
+# 3. 让 Python 指向组合 CA 包（两个都要设）
+#    requests / huggingface_hub 读 REQUESTS_CA_BUNDLE；标准库 ssl 读 SSL_CERT_FILE
+export REQUESTS_CA_BUNDLE=~/.local/share/uxflow/combined-ca.pem
+export SSL_CERT_FILE=~/.local/share/uxflow/combined-ca.pem
+
+# 4. 带上 CA 包重跑第 5 步
+UXFLOW_EMBED_BACKEND=local UXFLOW_DB=~/.local/share/uxflow/real.db \
+  uv run python scripts/e2e_smoke.py "写入py文件有语法错误"
+```
+
+下完一次后这套环境变量可以撤掉（模型已落盘到 `~/.cache/huggingface/hub`）；之后想避网可再开 `HF_HUB_OFFLINE=1`。
 
 ## 测试
 

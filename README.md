@@ -88,9 +88,13 @@ Four things change between the run above and a real one. Do them in order — ea
 
 ### Step 1 — start an LLM proxy
 
-UXFlow sends LLM calls to a standard OpenAI-compatible `/chat/completions` endpoint. Route them through a LiteLLM proxy (Options A/B) or connect a provider directly (Option C). Skip this step if you already run a LiteLLM proxy.
+UXFlow sends LLM calls to a standard OpenAI-compatible `/chat/completions` endpoint. Route them through a LiteLLM proxy (Options B/C) or connect a provider directly (Option A). Skip this step if you already run a LiteLLM proxy.
 
-**Option A — via uv (no Docker):**
+**Option A — connect a provider directly (no LiteLLM proxy):**
+
+If your provider is itself OpenAI-compatible (OpenAI / DeepSeek / Moonshot / OpenRouter, etc.), skip the proxy entirely and point `.env` straight at the provider — no docker/uvx. In this mode `LITELLM_KEY` is your provider's key (not `sk-local-dev`), and you must override the default aliases `gpt-5.5` / `gpt-4o-mini` with `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` (most providers don't have `gpt-5.5`). See [step 2](#step-2--configure-env) direct-connect values.
+
+**Option B — via uv (no Docker):**
 
 ```bash
 cp litellm.config.example.yaml litellm.config.yaml
@@ -107,7 +111,7 @@ uvx --from 'litellm[proxy]==1.95.0' --with 'fastapi<0.140.7' \
 >
 > A `failed to fetch remote model cost map ... falling back to local backup` warning is harmless — litellm could not reach its pricing table and used the bundled copy. Silence it with `export LITELLM_LOCAL_MODEL_COST_MAP=True`.
 
-**Option B — via Docker:**
+**Option C — via Docker:**
 
 ```bash
 cp litellm.config.example.yaml litellm.config.yaml
@@ -118,10 +122,6 @@ docker compose -f docker-compose.litellm.yml up -d
 **Expected:** uvicorn startup logs, listening on port 4000. Leave this running and open a second terminal for the remaining steps.
 
 > ⚠️ **The two `model_name` values must match what UXFlow asks for** — `gpt-5.5` for compilation, `gpt-4o-mini` for judging. A mismatch surfaces much later as the misleading `Call 1 failed after retries`. To use different names, set `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` to match.
-
-**Option C — connect a provider directly (no LiteLLM proxy):**
-
-If your provider is itself OpenAI-compatible (OpenAI / DeepSeek / Moonshot / OpenRouter, etc.), skip the proxy entirely and point `.env` straight at the provider — no docker/uvx. In this mode `LITELLM_KEY` is your provider's key (not `sk-local-dev`), and you must override the default aliases `gpt-5.5` / `gpt-4o-mini` with `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` (most providers don't have `gpt-5.5`). See [step 2](#step-2--configure-env) direct-connect values.
 
 ### Step 2 — configure `.env`
 
@@ -139,7 +139,7 @@ Set these three:
 
 `real` is the default on purpose: with credentials missing it **fails loudly** rather than silently falling back to replays.
 
-**Option C (direct provider) — set instead:**
+**Option A (direct provider) — set instead:**
 
 | Variable | Value | Note |
 |---|---|---|
@@ -254,11 +254,81 @@ UXFlow itself needs no external services beyond your LLM endpoint, but three of 
 | `uv sync` / `uvx` | PyPI | `export UV_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple` |
 | `uv` provisioning Python | GitHub Releases | `export UV_PYTHON_INSTALL_MIRROR=<a GitHub release proxy>`, or install a Python ≥3.11 yourself |
 | `UXFLOW_EMBED_BACKEND=local` | HuggingFace | `export HF_ENDPOINT=https://hf-mirror.com` |
-| `docker compose ... litellm` | Docker Hub | use **Option A** in [step 1](#step-1--start-an-llm-proxy) — it goes through PyPI instead |
+| `docker compose ... litellm` | Docker Hub | use **Option B** in [step 1](#step-1--start-an-llm-proxy) — it goes through PyPI instead |
 
-If a TLS-intercepting proxy sits in front of you, Docker fails with `x509: certificate signed by unknown authority` even when `curl` to the same host succeeds — curl trusts the proxy's CA from the system store, the Docker daemon does not. Either install that CA for the daemon and restart it, or take Option A.
+If a TLS-intercepting proxy sits in front of you, Docker fails with `x509: certificate signed by unknown authority` even when `curl` to the same host succeeds — curl trusts the proxy's CA from the system store, the Docker daemon does not. Either install that CA for the daemon and restart it, or take Option B.
 
 Leave `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` commented out until the Qwen model is actually on disk — setting them early blocks the very download they're meant to skip.
+
+### Stuck embedding-model download: diagnosing & fixing a TLS-intercepting proxy
+
+`model.safetensors` stuck at 0% while `curl https://huggingface.co` works — usually a TLS-intercepting proxy upstream: it passes the **metadata domain** (huggingface.co) through but re-signs the **download domain** (`*.cdn.hf.co`, where the weight files live via CDN). Python doesn't trust the proxy's CA, so the handshake stalls. Diagnose first, then fix once confirmed.
+
+**Diagnose**
+
+```bash
+# Get the download host (resolve 302-redirects to the CDN) + the proxy host:port
+CDN_HOST=$(curl -sI -o /dev/null -w '%{redirect_url}\n' \
+  https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/main/model.safetensors \
+  | sed -E 's#https?://([^/]+).*#\1#')
+echo "download host: $CDN_HOST"   # e.g. cdn-lfs.huggingface.co / *.hf.co; if empty, grab the https://... host from the stuck download log
+PROXY=${https_proxy:-$HTTPS_PROXY}; PROXY=${PROXY#http://}; PROXY=${PROXY#https://}; PROXY=${PROXY%%/*}
+[ -n "$PROXY" ] && PROXY_FLAG=(-proxy "$PROXY") || PROXY_FLAG=()
+echo "proxy: ${PROXY:-(unset, treat as transparent bump)}"
+
+# 1. Metadata domain = huggingface.co. Public CA issuer (DigiCert / Let's Encrypt) → proxy passes it through
+openssl s_client -connect huggingface.co:443 -servername huggingface.co "${PROXY_FLAG[@]}" </dev/null 2>/dev/null \
+  | openssl x509 -noout -issuer
+
+# 2. Download domain = $CDN_HOST. Non-public issuer (self-signed / vendor CA) → proxy is decrypting it
+openssl s_client -connect "$CDN_HOST":443 -servername "$CDN_HOST" "${PROXY_FLAG[@]}" </dev/null 2>/dev/null \
+  | openssl x509 -noout -issuer
+```
+
+Step 1 public CA + step 2 private/vendor CA → confirmed TLS-intercepting proxy on the download domain only. Fix below. (Both public CA → it's not a cert issue; use `export HF_ENDPOINT=https://hf-mirror.com` instead.)
+
+**Fix: make Python trust the proxy's CA**
+
+```bash
+# 1. Export the download domain's full cert chain (leaf + proxy's self-signed root CA)
+#    Must connect to the download domain $CDN_HOST, not huggingface.co (metadata domain isn't decrypted, you won't get the proxy CA there)
+mkdir -p ~/.local/share/uxflow
+CDN_HOST=$(curl -sI -o /dev/null -w '%{redirect_url}\n' \
+  https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/main/model.safetensors \
+  | sed -E 's#https?://([^/]+).*#\1#')
+PROXY=${https_proxy:-$HTTPS_PROXY}; PROXY=${PROXY#http://}; PROXY=${PROXY#https://}; PROXY=${PROXY%%/*}
+[ -n "$PROXY" ] && PROXY_FLAG=(-proxy "$PROXY") || PROXY_FLAG=()
+openssl s_client -showcerts -connect "$CDN_HOST":443 -servername "$CDN_HOST" "${PROXY_FLAG[@]}" </dev/null 2>/dev/null \
+  | sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p' \
+  > ~/.local/share/uxflow/proxy-ca.pem
+
+# 2. Combined CA bundle = system CA + proxy chain
+#    Don't use proxy-ca.pem alone — it only has the proxy CA, and using it alone breaks normal HTTPS
+#    System CA: macOS from keychain, Linux from the distro's ca-certificates
+case "$(uname -s)" in
+  Darwin)
+    SYS_CA=~/.local/share/uxflow/sys-ca.pem
+    security find-certificate -a -p /Library/Keychains/System.keychain > "$SYS_CA"
+    security find-certificate -a -p /System/Library/Keychains/SystemRootCertificates.keychain >> "$SYS_CA"
+    ;;
+  Linux)
+    SYS_CA=/etc/ssl/certs/ca-certificates.crt                              # Debian/Ubuntu/Fedora
+    [ -f /etc/pki/tls/certs/ca-bundle.crt ] && SYS_CA=/etc/pki/tls/certs/ca-bundle.crt   # RHEL/CentOS
+    ;;
+esac
+cat "$SYS_CA" ~/.local/share/uxflow/proxy-ca.pem > ~/.local/share/uxflow/combined-ca.pem
+
+# 3. Point Python at the combined bundle (set BOTH)
+#    requests / huggingface_hub read REQUESTS_CA_BUNDLE; stdlib ssl reads SSL_CERT_FILE
+export REQUESTS_CA_BUNDLE=~/.local/share/uxflow/combined-ca.pem
+export SSL_CERT_FILE=~/.local/share/uxflow/combined-ca.pem
+
+# 4. Re-run step 5 with the CA bundle
+UXFLOW_EMBED_BACKEND=local UXFLOW_DB=~/.local/share/uxflow/real.db \
+  uv run python scripts/e2e_smoke.py "写入py文件有语法错误"
+```
+
+Once it's downloaded once you can drop these env vars (the model is cached under `~/.cache/huggingface/hub`); to go offline after that, set `HF_HUB_OFFLINE=1`.
 
 ## Test
 
