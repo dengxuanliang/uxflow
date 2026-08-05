@@ -32,7 +32,7 @@ cd uxflow
 uv sync --extra dev --extra service
 ```
 
-The core install is lightweight (httpx, datasketch, numpy) and pulls **no ML dependencies**. The `service` extra adds FastAPI + uvicorn for the Inspector UI.
+The core install is lightweight (httpx, datasketch, numpy, python-dotenv) and pulls **no ML dependencies**. The `service` extra adds FastAPI + uvicorn for the Inspector UI.
 
 ---
 
@@ -88,7 +88,7 @@ Four things change between the run above and a real one. Do them in order — ea
 
 ### Step 1 — start an LLM proxy
 
-UXFlow sends every LLM call through a LiteLLM proxy. Skip this step if you already run one.
+UXFlow sends LLM calls to a standard OpenAI-compatible `/chat/completions` endpoint. Route them through a LiteLLM proxy (Options A/B) or connect a provider directly (Option C). Skip this step if you already run a LiteLLM proxy.
 
 **Option A — via uv (no Docker):**
 
@@ -119,6 +119,10 @@ docker compose -f docker-compose.litellm.yml up -d
 
 > ⚠️ **The two `model_name` values must match what UXFlow asks for** — `gpt-5.5` for compilation, `gpt-4o-mini` for judging. A mismatch surfaces much later as the misleading `Call 1 failed after retries`. To use different names, set `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` to match.
 
+**Option C — connect a provider directly (no LiteLLM proxy):**
+
+If your provider is itself OpenAI-compatible (OpenAI / DeepSeek / Moonshot / OpenRouter, etc.), skip the proxy entirely and point `.env` straight at the provider — no docker/uvx. In this mode `LITELLM_KEY` is your provider's key (not `sk-local-dev`), and you must override the default aliases `gpt-5.5` / `gpt-4o-mini` with `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` (most providers don't have `gpt-5.5`). See [step 2](#step-2--configure-env) direct-connect values.
+
 ### Step 2 — configure `.env`
 
 ```bash
@@ -134,6 +138,15 @@ Set these three:
 | `UXFLOW_LLM_BACKEND` | `real` | already the default |
 
 `real` is the default on purpose: with credentials missing it **fails loudly** rather than silently falling back to replays.
+
+**Option C (direct provider) — set instead:**
+
+| Variable | Value | Note |
+|---|---|---|
+| `LITELLM_BASE` | `https://your-provider/v1` | your provider's base URL |
+| `LITELLM_KEY` | your provider's key | the provider API key, not `sk-local-dev` |
+| `UXFLOW_COMPILE_MODEL` | your real model name | overrides alias `gpt-5.5` (compilation, strict JSON) |
+| `UXFLOW_JUDGE_MODEL` | your real model name | overrides alias `gpt-4o-mini` (judging) |
 
 ### Step 3 — verify the proxy answers
 
