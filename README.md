@@ -264,32 +264,36 @@ If a TLS-intercepting proxy sits in front of you, Docker fails with `x509: certi
 
 Leave `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` commented out until the Qwen model is actually on disk — setting them early blocks the very download they're meant to skip.
 
-### Stuck embedding-model download: diagnosing & fixing a TLS-intercepting proxy
+### Stuck embedding-model download: making Python trust a TLS-intercepting proxy's CA
 
-`model.safetensors` stuck at 0% while `curl https://huggingface.co` works — usually a TLS-intercepting proxy upstream: it passes the **metadata domain** (huggingface.co) through but re-signs the **download domain** (`*.cdn.hf.co`, where the weight files live via CDN). Python doesn't trust the proxy's CA, so the handshake stalls. Diagnose first, then fix once confirmed.
+`model.safetensors` stuck at 0% while `curl https://huggingface.co` works — usually a TLS-intercepting proxy upstream: it passes the **metadata domain** (huggingface.co) through but re-signs the **download domain** (`*.cdn.hf.co`, where the weight files live via CDN). Python's `ssl` doesn't trust the proxy's private CA, so the handshake to the CDN fails and the download never starts (0%, no `.incomplete` file). Diagnose first, then fix once confirmed.
 
 **Diagnose**
 
 ```bash
-# Get the download host (resolve 302-redirects to the CDN) + the proxy host:port
+# 1. Confirm it's "zero bytes", not a broken download: no *.incomplete and no safetensors
+find ~/.cache/huggingface/hub/models--Qwen--Qwen3-Embedding-0.6B \
+  -name '*.safetensors' -o -name '*.incomplete'
+# (empty output = download never started, not interrupted)
+
+# 2. Get the download host (resolve 302-redirects to the CDN) + the proxy host:port
 CDN_HOST=$(curl -sI -o /dev/null -w '%{redirect_url}\n' \
   https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/main/model.safetensors \
   | sed -E 's#https?://([^/]+).*#\1#')
-echo "download host: $CDN_HOST"   # e.g. cdn-lfs.huggingface.co / *.hf.co; if empty, grab the https://... host from the stuck download log
+echo "download host: $CDN_HOST"   # e.g. us.aws.cdn.hf.co / *.hf.co
 PROXY=${https_proxy:-$HTTPS_PROXY}; PROXY=${PROXY#http://}; PROXY=${PROXY#https://}; PROXY=${PROXY%%/*}
 [ -n "$PROXY" ] && PROXY_FLAG=(-proxy "$PROXY") || PROXY_FLAG=()
-echo "proxy: ${PROXY:-(unset, treat as transparent bump)}"
 
-# 1. Metadata domain = huggingface.co. Public CA issuer (DigiCert / Let's Encrypt) → proxy passes it through
+# 3. Metadata domain = huggingface.co. Public CA issuer (DigiCert / Amazon / Let's Encrypt) → proxy passes it through
 openssl s_client -connect huggingface.co:443 -servername huggingface.co "${PROXY_FLAG[@]}" </dev/null 2>/dev/null \
   | openssl x509 -noout -issuer
 
-# 2. Download domain = $CDN_HOST. Non-public issuer (self-signed / vendor CA) → proxy is decrypting it
+# 4. Download domain = $CDN_HOST. Non-public issuer (self-signed / vendor CA) → proxy is decrypting it
 openssl s_client -connect "$CDN_HOST":443 -servername "$CDN_HOST" "${PROXY_FLAG[@]}" </dev/null 2>/dev/null \
   | openssl x509 -noout -issuer
 ```
 
-Step 1 public CA + step 2 private/vendor CA → confirmed TLS-intercepting proxy on the download domain only. Fix below. (Both public CA → it's not a cert issue; use `export HF_ENDPOINT=https://hf-mirror.com` instead.)
+Step 3 public CA + step 4 private/vendor CA → confirmed TLS-intercepting proxy on the download domain only. Fix below. (Both public CA → it's not a cert issue; use `export HF_ENDPOINT=https://hf-mirror.com` instead.)
 
 **Fix: make Python trust the proxy's CA**
 
@@ -322,10 +326,13 @@ case "$(uname -s)" in
 esac
 cat "$SYS_CA" ~/.local/share/uxflow/proxy-ca.pem > ~/.local/share/uxflow/combined-ca.pem
 
-# 3. Point Python at the combined bundle (set BOTH)
-#    requests / huggingface_hub read REQUESTS_CA_BUNDLE; stdlib ssl reads SSL_CERT_FILE
-export REQUESTS_CA_BUNDLE=~/.local/share/uxflow/combined-ca.pem
+# 3. Point Python at the combined bundle (SSL_CERT_FILE is the one that matters)
+#    huggingface_hub 1.x downloads via `httpx` (not `requests`); httpx reads
+#    SSL_CERT_FILE / SSL_CERT_DIR (trust_env=True, the default), NOT REQUESTS_CA_BUNDLE
+#    / CURL_CA_BUNDLE. Verified: setting only those two still fails with
+#    [SSL: CERTIFICATE_VERIFY_FAILED]. Keep REQUESTS_CA_BUNDLE for other `requests`/`curl` tooling.
 export SSL_CERT_FILE=~/.local/share/uxflow/combined-ca.pem
+export REQUESTS_CA_BUNDLE=~/.local/share/uxflow/combined-ca.pem
 
 # 4. Re-run step 5 with the CA bundle
 UXFLOW_EMBED_BACKEND=local UXFLOW_DB=~/.local/share/uxflow/real.db \

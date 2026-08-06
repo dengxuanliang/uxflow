@@ -264,32 +264,36 @@ UXFlow 本身除了你的 LLM 端点之外不依赖任何外部服务，但它�
 
 在 Qwen 模型真正落盘之前，请保持 `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` 处于注释状态 —— 过早开启会阻断它们本想跳过的那次下载。
 
-### 嵌入模型下载卡住：TLS 拦截代理的诊断与修复
+### 嵌入模型下载卡住：让 Python 信任拦截代理的 CA
 
-`model.safetensors` 卡在 0% 不动、但 `curl https://huggingface.co` 是通的——多半是前面有一层 TLS 拦截代理：它对**元数据域**（huggingface.co）放行，却对**下载域**（`*.cdn.hf.co`，权重文件走 CDN）解密重签。Python 不认代理的 CA，于是卡在握手。先诊断，确认后再修复。
+`model.safetensors` 卡在 0% 不动、但 `curl https://huggingface.co` 是通的——多半是前面有一层 TLS 拦截代理：它对**元数据域**（huggingface.co）放行，却对**下载域**（`*.cdn.hf.co`，权重文件走 CDN）解密重签。Python 的 `ssl` 不认代理的私有 CA，于是到 CDN 的握手失败、下载根本起不来（0%，没有 `.incomplete` 文件）。先诊断，确认后再修复。
 
 **诊断**
 
 ```bash
-# 取下载域主机名（resolve 会 302 到 CDN）+ 代理 host:port
+# 1. 先确认是"零字节"，不是下到一半断了：没有 *.incomplete 也没有 safetensors
+find ~/.cache/huggingface/hub/models--Qwen--Qwen3-Embedding-0.6B \
+  -name '*.safetensors' -o -name '*.incomplete'
+# （输出为空 = 下载从未开始，不是被中断）
+
+# 2. 取下载域主机名（resolve 会 302 到 CDN）+ 代理 host:port
 CDN_HOST=$(curl -sI -o /dev/null -w '%{redirect_url}\n' \
   https://huggingface.co/Qwen/Qwen3-Embedding-0.6B/resolve/main/model.safetensors \
   | sed -E 's#https?://([^/]+).*#\1#')
-echo "下载域: $CDN_HOST"   # 形如 cdn-lfs.huggingface.co / *.hf.co；为空则从卡住的下载日志里找 https://... 主机名
+echo "下载域: $CDN_HOST"   # 形如 us.aws.cdn.hf.co / *.hf.co
 PROXY=${https_proxy:-$HTTPS_PROXY}; PROXY=${PROXY#http://}; PROXY=${PROXY#https://}; PROXY=${PROXY%%/*}
 [ -n "$PROXY" ] && PROXY_FLAG=(-proxy "$PROXY") || PROXY_FLAG=()
-echo "代理: ${PROXY:-(未设，按透明拦截处理)}"
 
-# 1. 元数据域 = huggingface.co。issuer 是公共 CA（DigiCert / Let's Encrypt）→ 代理对它透传
+# 3. 元数据域 = huggingface.co。issuer 是公共 CA（DigiCert / Amazon / Let's Encrypt）→ 代理对它透传
 openssl s_client -connect huggingface.co:443 -servername huggingface.co "${PROXY_FLAG[@]}" </dev/null 2>/dev/null \
   | openssl x509 -noout -issuer
 
-# 2. 下载域 = $CDN_HOST。issuer 不是公共 CA（自签 / 厂商 CA）→ 代理在解密下载域
+# 4. 下载域 = $CDN_HOST。issuer 不是公共 CA（自签 / 厂商 CA）→ 代理在解密下载域
 openssl s_client -connect "$CDN_HOST":443 -servername "$CDN_HOST" "${PROXY_FLAG[@]}" </dev/null 2>/dev/null \
   | openssl x509 -noout -issuer
 ```
 
-第 1 步公共 CA + 第 2 步私有厂商 CA → 确认是只对下载域解密的 TLS 拦截代理，按下面修复。（两步都是公共 CA → 不是证书问题，改用 `export HF_ENDPOINT=https://hf-mirror.com` 走镜像。）
+第 3 步公共 CA + 第 4 步私有厂商 CA → 确认是只对下载域解密的 TLS 拦截代理，按下面修复。（两步都是公共 CA → 不是证书问题，改用 `export HF_ENDPOINT=https://hf-mirror.com` 走镜像。）
 
 **修复：让 Python 信任代理的 CA**
 
@@ -322,10 +326,12 @@ case "$(uname -s)" in
 esac
 cat "$SYS_CA" ~/.local/share/uxflow/proxy-ca.pem > ~/.local/share/uxflow/combined-ca.pem
 
-# 3. 让 Python 指向组合 CA 包（两个都要设）
-#    requests / huggingface_hub 读 REQUESTS_CA_BUNDLE；标准库 ssl 读 SSL_CERT_FILE
-export REQUESTS_CA_BUNDLE=~/.local/share/uxflow/combined-ca.pem
+# 3. 让 Python 指向组合 CA 包（真正起作用的是 SSL_CERT_FILE）
+#    huggingface_hub 1.x 用 `httpx` 下载（不是 `requests`）；httpx 在 trust_env=True（默认）时
+#    读 SSL_CERT_FILE / SSL_CERT_DIR，不读 REQUESTS_CA_BUNDLE / CURL_CA_BUNDLE。
+#    实测：只设后两个仍报 [SSL: CERTIFICATE_VERIFY_FAILED]。保留 REQUESTS_CA_BUNDLE 只为照顾其他用 `requests`/`curl` 的工具。
 export SSL_CERT_FILE=~/.local/share/uxflow/combined-ca.pem
+export REQUESTS_CA_BUNDLE=~/.local/share/uxflow/combined-ca.pem
 
 # 4. 带上 CA 包重跑第 5 步
 UXFLOW_EMBED_BACKEND=local UXFLOW_DB=~/.local/share/uxflow/real.db \
