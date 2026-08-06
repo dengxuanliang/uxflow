@@ -92,7 +92,7 @@ UXFlow sends LLM calls to a standard OpenAI-compatible `/chat/completions` endpo
 
 **Option A — connect a provider directly (no LiteLLM proxy):**
 
-If your provider is itself OpenAI-compatible (OpenAI / DeepSeek / Moonshot / OpenRouter, etc.), skip the proxy entirely and point `.env` straight at the provider — no docker/uvx. In this mode `LITELLM_KEY` is your provider's key (not `sk-local-dev`), and you must override the default aliases `gpt-5.5` / `gpt-4o-mini` with `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` (most providers don't have `gpt-5.5`). See [step 2](#step-2--configure-env) direct-connect values.
+If your provider is itself OpenAI-compatible (OpenAI / DeepSeek / Moonshot / OpenRouter, etc.), skip the proxy entirely and point `.env` straight at the provider — no docker/uvx. In this mode `LITELLM_KEY` is your provider's key (not `sk-local-dev`), and you must override the default aliases `gpt-5.5` / `gpt-4o-mini` with `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` (most providers don't have `gpt-5.5`). See [step 2](#step-2--configure-env) direct-connect values. **Note: you're skipping the litellm proxy, not the later steps** — Steps 2–5 still apply to direct-connect users; just read "proxy" as "your provider endpoint".
 
 **Option B — via uv (no Docker):**
 
@@ -148,13 +148,13 @@ Set these three:
 | `UXFLOW_COMPILE_MODEL` | your real model name | overrides alias `gpt-5.5` (compilation, strict JSON) |
 | `UXFLOW_JUDGE_MODEL` | your real model name | overrides alias `gpt-4o-mini` (judging) |
 
-### Step 3 — verify the proxy answers
+### Step 3 — verify your LLM endpoint answers
 
 ```bash
 uv run python scripts/check_model_split.py
 ```
 
-This isolates one question — do both model names route through and answer? — so a failure here is definitively connectivity or naming, never business logic.
+This isolates one question — do both model names answer at the endpoint? — so a failure here is definitively connectivity or naming, never business logic.
 
 **Expected:**
 
@@ -166,7 +166,7 @@ This isolates one question — do both model names route through and answer? —
 ✓ both models answered — split is live.
 ```
 
-Exit code `0`. **If it fails**, the script tells you how to read it: `404-ish / empty` → that model name is not registered in your `litellm.config.yaml`; `timeout / conn` → the proxy at `LITELLM_BASE` is not reachable.
+Exit code `0`. **If it fails**, the script tells you how to read it: `404-ish / empty` → the endpoint didn't recognize that model name (direct connect = your provider doesn't have it; proxy = it's not registered in your `litellm.config.yaml`); `timeout / conn` → the endpoint at `LITELLM_BASE` (provider or proxy) is not reachable.
 
 Do not continue until this passes.
 
@@ -177,6 +177,8 @@ uv sync --extra local-embed
 ```
 
 This pulls `torch` + `sentence-transformers` (a large download), and on first run fetches `Qwen/Qwen3-Embedding-0.6B` from HuggingFace. If HuggingFace is slow or blocked for you, see [Behind a restricted network](#behind-a-restricted-network).
+
+If you also want the Inspector UI, run `uv sync --extra service` too (see [Install](#install)).
 
 Prefer not to run a model locally? Use a hosted embedding endpoint instead — set `UXFLOW_EMBED_BACKEND=api` and see [Embedding backends](#embedding-backends).
 
@@ -212,6 +214,8 @@ UXFLOW_EMBED_BACKEND=local UXFLOW_DB=~/.local/share/uxflow/real.db \
 ## Inspector web UI
 
 The same pipeline behind a browser UI, with live progress over SSE:
+
+**Run `uv sync --extra service` first** (pulls FastAPI + uvicorn, see [Install](#install)); otherwise you'll hit `No module named uvicorn`.
 
 ```bash
 uv run python scripts/inspector_serve.py     # then open http://127.0.0.1:8000

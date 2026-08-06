@@ -92,7 +92,7 @@ UXFlow 的 LLM 调用走标准 OpenAI 兼容的 `/chat/completions` 端点。可
 
 **方式 A —— 直连供应商（不跑 LiteLLM 代理）:**
 
-若你的供应商本身是 OpenAI 兼容（OpenAI / DeepSeek / Moonshot / OpenRouter 等），跳过本步的代理，直接让 `.env` 指向供应商——无需 docker/uvx。此方式下 `LITELLM_KEY` 就填供应商的 key（不是 `sk-local-dev`），并必须用 `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` 覆盖默认别名 `gpt-5.5` / `gpt-4o-mini`（多数供应商没有 `gpt-5.5`）。具体见[步骤 2](#步骤-2--配置-env) 的直连列。
+若你的供应商本身是 OpenAI 兼容（OpenAI / DeepSeek / Moonshot / OpenRouter 等），跳过本步的代理，直接让 `.env` 指向供应商——无需 docker/uvx。此方式下 `LITELLM_KEY` 就填供应商的 key（不是 `sk-local-dev`），并必须用 `UXFLOW_COMPILE_MODEL` / `UXFLOW_JUDGE_MODEL` 覆盖默认别名 `gpt-5.5` / `gpt-4o-mini`（多数供应商没有 `gpt-5.5`）。具体见[步骤 2](#步骤-2--配置-env) 的直连列。**注意：跳过的只是 litellm 代理，不是后续步骤** —— Step 2–5 对直连同用户同样适用，只是把「代理」读作「你的供应商端点」。
 
 **方式 B —— 用 uv（不依赖 Docker）:**
 
@@ -148,13 +148,13 @@ cp .env.example .env
 | `UXFLOW_COMPILE_MODEL` | 供应商真实模型名 | 覆盖别名 `gpt-5.5`（编译，需严格 JSON） |
 | `UXFLOW_JUDGE_MODEL` | 供应商真实模型名 | 覆盖别名 `gpt-4o-mini`（裁决） |
 
-### 步骤 3 —— 验证代理确实能答
+### 步骤 3 —— 验证你的 LLM 端点确实能答
 
 ```bash
 uv run python scripts/check_model_split.py
 ```
 
-这一步只隔离一个问题：两个模型名能否路由通并给出应答。因此这里失败一定是连通性或命名问题，绝不会是业务逻辑问题。
+这一步只隔离一个问题：两个模型名能否在端点处给出应答。因此这里失败一定是连通性或命名问题，绝不会是业务逻辑问题。
 
 **预期结果:**
 
@@ -166,7 +166,7 @@ uv run python scripts/check_model_split.py
 ✓ both models answered — split is live.
 ```
 
-退出码 `0`。**失败时脚本会告诉你怎么读**：`404-ish / empty` → 该模型名没在你的 `litellm.config.yaml` 里注册；`timeout / conn` → `LITELLM_BASE` 上的代理不可达。
+退出码 `0`。**失败时脚本会告诉你怎么读**：`404-ish / empty` → 端点没认这个模型名（直连=供应商没有该模型；代理=该模型名没在 `litellm.config.yaml` 里注册）；`timeout / conn` → `LITELLM_BASE` 指向的端点（供应商 / 代理）不可达。
 
 **这一步不通过，不要往下走。**
 
@@ -177,6 +177,8 @@ uv sync --extra local-embed
 ```
 
 这会拉取 `torch` + `sentence-transformers`（体积很大），并在首次运行时从 HuggingFace 下载 `Qwen/Qwen3-Embedding-0.6B`。如果 HuggingFace 对你很慢或不通，见[受限网络环境](#受限网络环境)。
+
+若你还想开 Inspector UI，同时 `uv sync --extra service`（见[安装](#安装)）。
 
 不想在本地跑模型？改用托管的嵌入端点：设 `UXFLOW_EMBED_BACKEND=api`，详见[嵌入后端](#嵌入后端)。
 
@@ -212,6 +214,8 @@ UXFLOW_EMBED_BACKEND=local UXFLOW_DB=~/.local/share/uxflow/real.db \
 ## Inspector web UI
 
 同一条流水线的浏览器界面，通过 SSE 实时展示进度:
+
+**需先 `uv sync --extra service`**（拉取 FastAPI + uvicorn，见[安装](#安装)）；否则会报 `No module named uvicorn`。
 
 ```bash
 uv run python scripts/inspector_serve.py     # 然后打开 http://127.0.0.1:8000
