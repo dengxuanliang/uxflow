@@ -1,11 +1,14 @@
 """End-to-end smoke test: Module 0 → Module 1/2 → Module 3.
 
-Connects both modules with real LLM + real local embedding model, runs on fixture
-trajectories, and prints intermediate results at each stage for human inspection.
+Runs the configured LLM backend (real by default) and the configured
+embedding backend (fake by default — set UXFLOW_EMBED_BACKEND=local or
+=api for real vectors) over fixture trajectories, printing intermediate
+results at each stage for human inspection.
 
 Usage:
-    .venv/bin/python scripts/e2e_smoke.py "写入py文件有语法错误"
-    .venv/bin/python scripts/e2e_smoke.py  # uses default query above
+    uv run python scripts/e2e_smoke.py "写入py文件有语法错误"
+    uv run python scripts/e2e_smoke.py                          # built-in default query
+    uv run python scripts/e2e_smoke.py "your query" sample_02.jsonl   # 2nd arg = trajectory file
 """
 
 import asyncio
