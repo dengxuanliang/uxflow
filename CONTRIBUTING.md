@@ -24,8 +24,12 @@ one, a plain `uv sync` will not pick up the change — it sees an unchanged
 `pyproject.toml` and does nothing, so you keep importing the stale copy:
 
 ```bash
-uv sync --extra dev --extra service --reinstall-package uxflow
+uv sync --extra dev --extra service --extra local-embed --reinstall-package uxflow
 ```
+
+`--reinstall-package uxflow` only re-copies the `uxflow` package itself (its
+dependencies stay cached, no re-download). All three extras are listed so this
+sync removes nothing installed earlier.
 
 The symptom is an `ImportError` for a symbol you just added, or an edit that
 appears to have no effect at all.
@@ -47,7 +51,7 @@ Tests are split by whether they need the real embedding model, using the `requir
 - **Full suite** requires the `local-embed` extra and downloads the Qwen model:
 
   ```bash
-  uv sync --extra local-embed
+  uv sync --extra dev --extra service --extra local-embed
   uv run pytest
   ```
 

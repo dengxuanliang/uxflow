@@ -23,8 +23,10 @@ uv sync --extra dev            # or: pip install -e ".[dev]"
 不会同步 —— 它看到 `pyproject.toml` 没变就什么都不做，于是你导入的仍是旧副本：
 
 ```bash
-uv sync --extra dev --extra service --reinstall-package uxflow
+uv sync --extra dev --extra service --extra local-embed --reinstall-package uxflow
 ```
+
+`--reinstall-package uxflow` 只重新拷贝 `uxflow` 包本身(依赖保持缓存,不会重下)。三个 extra 都列上,这次同步不会卸掉之前装好的包。
 
 典型症状是：刚加的符号报 `ImportError`，或者改动看起来完全没生效。
 
@@ -45,7 +47,7 @@ uv sync --extra dev --extra service --reinstall-package uxflow
 - **完整套件**:需要 `local-embed` extra 并会下载 Qwen 模型:
 
   ```bash
-  uv sync --extra local-embed
+  uv sync --extra dev --extra service --extra local-embed
   uv run pytest
   ```
 
