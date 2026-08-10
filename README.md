@@ -173,12 +173,12 @@ Do not continue until this passes.
 ### Step 4 — install a real embedding backend
 
 ```bash
-uv sync --extra local-embed
+uv sync --extra dev --extra service --extra local-embed
 ```
 
 This pulls `torch` + `sentence-transformers` (a large download), and on first run fetches `Qwen/Qwen3-Embedding-0.6B` from HuggingFace. If HuggingFace is slow or blocked for you, see [Behind a restricted network](#behind-a-restricted-network).
 
-If you also want the Inspector UI, run `uv sync --extra service` too (see [Install](#install)).
+`dev` and `service` are re-listed on purpose: `uv sync` is a *sync*, not an additive install, so listing only `--extra local-embed` here would uninstall the `dev` and `service` packages the [Install](#install) step added. The `service` extra is already included, so the [Inspector web UI](#inspector-web-ui) works too.
 
 Prefer not to run a model locally? Use a hosted embedding endpoint instead — set `UXFLOW_EMBED_BACKEND=api` and see [Embedding backends](#embedding-backends).
 
@@ -215,7 +215,7 @@ UXFLOW_EMBED_BACKEND=local UXFLOW_DB=~/.local/share/uxflow/real.db \
 
 The same pipeline behind a browser UI, with live progress over SSE:
 
-**Run `uv sync --extra service` first** (pulls FastAPI + uvicorn, see [Install](#install)); otherwise you'll hit `No module named uvicorn`.
+**Run `uv sync --extra dev --extra service --extra local-embed` first** (the `service` extra pulls FastAPI + uvicorn; all three are listed so this sync removes nothing installed earlier — see [Install](#install)); otherwise you'll hit `No module named uvicorn`.
 
 ```bash
 uv run python scripts/inspector_serve.py     # then open http://127.0.0.1:8000
@@ -346,7 +346,7 @@ Once it's downloaded once you can drop these env vars (the model is cached under
 ```bash
 uv run pytest -m "not requires_model"   # pure logic, no ML deps
 
-uv sync --extra local-embed             # needed for the full suite
+uv sync --extra dev --extra service --extra local-embed   # full suite: keep dev/service, add local-embed
 uv run pytest                           # full suite (loads the Qwen model)
 ```
 

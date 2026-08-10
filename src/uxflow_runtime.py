@@ -53,7 +53,7 @@ def make_embedder(backend: str | None = None):
         except ImportError as e:
             raise SystemExit(
                 f"{_EMBED_ENV}=local needs the local-embed extra.\n"
-                '  uv sync --extra local-embed   (or: pip install -e ".[local-embed]")\n'
+                '  uv sync --extra dev --extra service --extra local-embed   (or: pip install -e ".[local-embed]")\n'
                 f"Or set {_EMBED_ENV}=fake to run without ML dependencies.\n"
                 f"  underlying error: {e}"
             ) from e

@@ -173,12 +173,12 @@ uv run python scripts/check_model_split.py
 ### 步骤 4 —— 安装真实嵌入后端
 
 ```bash
-uv sync --extra local-embed
+uv sync --extra dev --extra service --extra local-embed
 ```
 
 这会拉取 `torch` + `sentence-transformers`（体积很大），并在首次运行时从 HuggingFace 下载 `Qwen/Qwen3-Embedding-0.6B`。如果 HuggingFace 对你很慢或不通，见[受限网络环境](#受限网络环境)。
 
-若你还想开 Inspector UI，同时 `uv sync --extra service`（见[安装](#安装)）。
+这里把 `dev` 和 `service` 也一并写上是有意为之:`uv sync` 是"同步"而非增量安装,只写 `--extra local-embed` 会把[安装](#安装)步骤装好的 `dev`、`service` 包卸载掉。`service` 已包含在内,故 [Inspector web UI](#inspector-web-ui) 也能用。
 
 不想在本地跑模型？改用托管的嵌入端点：设 `UXFLOW_EMBED_BACKEND=api`，详见[嵌入后端](#嵌入后端)。
 
@@ -215,7 +215,7 @@ UXFLOW_EMBED_BACKEND=local UXFLOW_DB=~/.local/share/uxflow/real.db \
 
 同一条流水线的浏览器界面，通过 SSE 实时展示进度:
 
-**需先 `uv sync --extra service`**（拉取 FastAPI + uvicorn，见[安装](#安装)）；否则会报 `No module named uvicorn`。
+**需先 `uv sync --extra dev --extra service --extra local-embed`**（`service` extra 拉取 FastAPI + uvicorn；三个 extra 都列上，这次同步不会卸掉之前装好的包 —— 见[安装](#安装)）；否则会报 `No module named uvicorn`。
 
 ```bash
 uv run python scripts/inspector_serve.py     # 然后打开 http://127.0.0.1:8000
@@ -345,7 +345,7 @@ UXFLOW_EMBED_BACKEND=local UXFLOW_DB=~/.local/share/uxflow/real.db \
 ```bash
 uv run pytest -m "not requires_model"   # 纯逻辑，无 ML 依赖
 
-uv sync --extra local-embed             # 运行完整套件前需先安装
+uv sync --extra dev --extra service --extra local-embed   # 完整套件：保留 dev/service，加装 local-embed
 uv run pytest                           # 完整套件（加载 Qwen 模型）
 ```
 
