@@ -343,3 +343,44 @@ def test_compile_has_no_route_field():
     view = build_inspector_view(run_id="r", spec=_spec(), scored=[],
                                 select_result={"targeted": [], "manifest": {}})
     assert "route" not in view["problems"][0]["compile"]
+
+
+def test_build_trajectory_index_includes_raw_messages():
+    """/runs 路径也要能看 Raw JSON —— 否则搜索能看、跑 pipeline 不能，行为不一致。"""
+    from service.viewmodel import build_trajectory_index
+
+    @dataclass
+    class FakeStep:
+        index: int
+        role: str
+        content: str
+        tool_call_name: object = None
+        tool_call_args: object = None
+        tool_result: object = None
+
+    @dataclass
+    class FakeTraj:
+        id: str
+        steps: list = field(default_factory=list)
+        raw_messages: list = field(default_factory=list)
+
+    raw = [{"role": "user", "content": "hi"},
+           {"role": "assistant", "content": "yo",
+            "tool_calls": [{"id": "c1", "type": "function",
+                            "function": {"name": "Read", "arguments": "{}"}}]}]
+    idx = build_trajectory_index([FakeTraj("t1", [FakeStep(0, "user", "hi")], raw)])
+    assert idx["t1"]["raw"] == raw
+    assert idx["t1"]["raw"][1]["tool_calls"][0]["id"] == "c1"
+
+
+def test_build_trajectory_index_without_raw_messages_attr():
+    """鸭子类型的调用方/老 fake 没有 raw_messages 属性时不得 AttributeError。"""
+    from service.viewmodel import build_trajectory_index
+
+    @dataclass
+    class BareTraj:            # 没有 raw_messages 字段
+        id: str
+        steps: list = field(default_factory=list)
+
+    idx = build_trajectory_index([BareTraj("t1", [])])
+    assert idx["t1"]["raw"] is None

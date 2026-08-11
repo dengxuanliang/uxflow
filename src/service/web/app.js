@@ -41,6 +41,7 @@ let state = {
   activeTraj: null,      // {trajectory_id, slice_index}
   activeHighlight: -1,   // index into current .hit-span elements
   trajCache: {},
+  rawMode: false,            // 第三栏：渲染视图 / 原始 OpenAI messages JSON
   // progress
   es: null,                  // active EventSource, so we can stop it
   startedAt: null,
@@ -58,6 +59,7 @@ let state = {
 $("run").addEventListener("click", startRun);
 $("stop").addEventListener("click", stopRun);
 $("next-highlight").addEventListener("click", jumpToNextHighlight);
+$("toggle-raw").addEventListener("click", toggleRawView);
 $("btn-search").addEventListener("click", startSearch);
 $("btn-ingest").addEventListener("click", startIngest);
 $("question").addEventListener("keydown", (e) => {
@@ -379,6 +381,7 @@ function resetRunState() {
   state.activeTraj = null;
   state.activeHighlight = -1;
   state.trajCache = {};
+  state.rawMode = false;     // 新 run 回到渲染视图（缓存已清，raw 也无从谈起）
   updateHighlightTools();
 }
 
@@ -767,6 +770,20 @@ function renderDetail() {
     updateHighlightTools();
     return;
   }
+
+  // Raw JSON 视图：原封不动的 OpenAI messages（含 tool_call_id 等 steps 丢掉的
+  // 字段），整条轨迹而非当前切片。
+  // 切到一条没有 raw 的轨迹时自动退回渲染视图 —— 否则按钮已 disabled，用户点不回来。
+  if (state.rawMode && !traj.raw) state.rawMode = false;
+  if (state.rawMode) {
+    const pre = document.createElement("pre");
+    pre.className = "raw-json";
+    pre.textContent = JSON.stringify(traj.raw, null, 2);   // textContent 即转义
+    el.appendChild(pre);
+    updateHighlightTools();
+    return;
+  }
+
   const hit = currentHits().find(
     (h) => h.trajectory_id === state.activeTraj.trajectory_id
       && h.slice_index === state.activeTraj.slice_index);
@@ -831,12 +848,22 @@ function updateHighlightTools() {
   const tools = $("detail-tools");
   const btn = $("next-highlight");
   const count = $("highlight-count");
+  updateRawToggle();
   if (!tools || !btn || !count) return;
 
   const spans = currentFocusedSpans();   // jump units are spans, not steps
   const total = spans.length;
   tools.classList.toggle("hidden", !state.activeTraj);
   btn.disabled = total === 0;
+
+  // Raw JSON 视图里没有 step 元素可跳，高亮导航无意义 —— 整组隐藏。
+  const raw = state.rawMode;
+  btn.classList.toggle("hidden", raw);
+  count.classList.toggle("hidden", raw);
+  if (raw) {
+    markCurrentSpan(null);
+    return;
+  }
 
   if (total === 0) {
     state.activeHighlight = -1;
@@ -849,6 +876,33 @@ function updateHighlightTools() {
   count.textContent = `高亮 ${current}/${total}`;
 
   markCurrentSpan(state.activeHighlight >= 0 ? spans[state.activeHighlight] : null);
+}
+
+// 当前选中轨迹的原始 OpenAI messages（无则 null）。
+function currentRawMessages() {
+  if (!state.activeTraj) return null;
+  const traj = state.trajCache[cacheKey(state.activeTraj.trajectory_id)];
+  return traj ? (traj.raw || null) : null;
+}
+
+function updateRawToggle() {
+  const btn = $("toggle-raw");
+  if (!btn) return;
+  const hasRaw = currentRawMessages() !== null;
+  // 切到一条没有 raw 的轨迹时，若还停在 raw 模式，按钮会因 disabled 而无法点回
+  // 渲染视图 —— 用户被卡住。此处强制退回渲染视图。
+  if (!hasRaw && state.rawMode) state.rawMode = false;
+  // 无原始数据（老库入库的轨迹）→ 置灰并说明原因，而不是让按钮点了没反应。
+  btn.disabled = !hasRaw;
+  btn.title = hasRaw ? "" : "该轨迹入库时未保存原始消息";
+  btn.textContent = state.rawMode ? "渲染视图" : "Raw JSON";
+  btn.classList.toggle("active", state.rawMode);
+}
+
+function toggleRawView() {
+  if (currentRawMessages() === null) return;
+  state.rawMode = !state.rawMode;
+  renderDetail();
 }
 
 function jumpToNextHighlight() {

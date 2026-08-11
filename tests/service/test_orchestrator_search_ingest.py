@@ -565,3 +565,88 @@ async def test_ingest_without_progress_support_still_works():
     view, _ = await run_ingest(trajectory_path="traj.jsonl", deps=deps,
                                emit=lambda e: None)
     assert view["summary"]["traj_ingested"] == 0
+
+
+# ── 14. Raw JSON: 原始 OpenAI messages 随 ingest 落库 ──────────────────
+class RawCapturingStore:
+    """记录 upsert 收到的 raw_json（新签名）。"""
+
+    def __init__(self):
+        self.calls = []
+
+    def upsert(self, traj_id, steps, *, source_path, raw_json=None):
+        self.calls.append({"id": traj_id, "steps": steps,
+                           "source_path": source_path, "raw_json": raw_json})
+
+
+class RawTrajectory:
+    """带 raw_messages 的轨迹（真 Trajectory 有此字段，见 module1/models.py）。"""
+
+    def __init__(self, tid, steps, raw_messages):
+        self.id = tid
+        self.steps = steps
+        self.raw_messages = raw_messages
+
+
+class RawPipeline:
+    def __init__(self, trajectories):
+        self._trajectories = trajectories
+        self.ingest_calls = []
+
+    def ingest_trajectories(self, paths, *, on_trajectory=None, on_progress=None):
+        self.ingest_calls.append(list(paths))
+        for path in paths:
+            for traj in self._trajectories:
+                if on_trajectory is not None:
+                    on_trajectory(traj, str(path))
+
+
+async def test_ingest_persists_raw_openai_messages():
+    """入库时把原封不动的 messages 一并写入 —— steps 扁平化丢掉的
+    tool_call_id / tool_calls[].id 只能从这里找回。"""
+    import json
+
+    raw = [
+        {"role": "user", "content": "修 bug"},
+        {"role": "assistant", "content": "读文件",
+         "tool_calls": [{"id": "call_1", "type": "function",
+                         "function": {"name": "Read", "arguments": '{"p":"a.py"}'}}]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "内容"},
+    ]
+    traj = RawTrajectory("t1", [FakeStep(0, "user", "修 bug")], raw)
+    store = RawCapturingStore()
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=RawPipeline([traj]), select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=store,
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    await run_ingest(trajectory_path="traj.jsonl", deps=deps, emit=lambda e: None)
+
+    assert len(store.calls) == 1
+    assert json.loads(store.calls[0]["raw_json"]) == raw
+
+
+async def test_ingest_tolerates_trajectory_without_raw_messages():
+    """鸭子类型的轨迹对象没有 raw_messages 时不得炸 —— raw_json 传 None 即可。"""
+    traj = FakeTrajectory("t1", [FakeStep(0, "user", "hi")])   # 无 raw_messages
+    store = RawCapturingStore()
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=RawPipeline([traj]), select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=store,
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    await run_ingest(trajectory_path="traj.jsonl", deps=deps, emit=lambda e: None)
+    assert store.calls[0]["raw_json"] is None
+
+
+async def test_ingest_works_with_legacy_store_without_raw_json_param():
+    """老 TrajectoryStore（upsert 不接受 raw_json）不得因此报错。"""
+    traj = RawTrajectory("t1", [FakeStep(0, "user", "hi")], [{"role": "user"}])
+    legacy = FakeTrajectoryStore()          # upsert 是老签名，无 raw_json
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=RawPipeline([traj]), select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=legacy,
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    await run_ingest(trajectory_path="traj.jsonl", deps=deps, emit=lambda e: None)
+    assert len(legacy.upsert_calls) == 1

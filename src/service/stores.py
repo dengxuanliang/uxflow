@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS trajectories (
     trajectory_id TEXT PRIMARY KEY,
     steps_json TEXT NOT NULL,
     source_path TEXT,
+    raw_json TEXT,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -84,6 +85,23 @@ _JUDGE_MIGRATIONS = (
 def _migrate_judge_cache(conn: sqlite3.Connection) -> None:
     """幂等补列：旧库（仅 matched/confidence/spans_json 三列）升级出可回溯两列。"""
     for stmt in _JUDGE_MIGRATIONS:
+        try:
+            conn.execute(stmt)
+        except sqlite3.OperationalError:
+            pass  # duplicate column name → 已存在，幂等跳过
+
+
+# 同上：raw_json 存入库时原封不动的 OpenAI messages。steps 是扁平化产物，丢了
+# tool_call_id、tool_calls[].id/type，以及"一条 assistant 多个 tool_call"的合并
+# 关系 —— Raw JSON 视图要的正是这些，只能另存。
+_TRAJECTORY_MIGRATIONS = (
+    "ALTER TABLE trajectories ADD COLUMN raw_json TEXT",
+)
+
+
+def _migrate_trajectories(conn: sqlite3.Connection) -> None:
+    """幂等补列：旧库（无 raw_json）升级后老行 raw 读作 None。"""
+    for stmt in _TRAJECTORY_MIGRATIONS:
         try:
             conn.execute(stmt)
         except sqlite3.OperationalError:
@@ -125,7 +143,8 @@ class TrajectoryStore(Protocol):
     """Full-text trajectory storage keyed by trajectory id."""
 
     def upsert(
-        self, trajectory_id: str, steps: list[dict], *, source_path: str
+        self, trajectory_id: str, steps: list[dict], *, source_path: str,
+        raw_json: str | None = None,
     ) -> None: ...
 
     def get(self, trajectory_id: str) -> dict | None: ...
@@ -232,20 +251,26 @@ class SqliteTrajectoryStore:
 
     def __init__(self, db_path: str | pathlib.Path):
         self._conn = _connect(db_path, _TRAJECTORY_SCHEMA)
+        # 旧库升级：CREATE TABLE IF NOT EXISTS 不给已存在的旧库加列，此处幂等 ALTER。
+        _migrate_trajectories(self._conn)
 
     def upsert(
-        self, trajectory_id: str, steps: list[dict], *, source_path: str
+        self, trajectory_id: str, steps: list[dict], *, source_path: str,
+        raw_json: str | None = None,
     ) -> None:
+        # raw_json 可选：老调用方（不传）行为不变，get() 那侧读作 None。
         self._conn.execute(
             """INSERT OR REPLACE INTO trajectories
-               (trajectory_id, steps_json, source_path)
-               VALUES (?,?,?)""",
-            (trajectory_id, json.dumps(steps, ensure_ascii=False), source_path),
+               (trajectory_id, steps_json, source_path, raw_json)
+               VALUES (?,?,?,?)""",
+            (trajectory_id, json.dumps(steps, ensure_ascii=False), source_path,
+             raw_json),
         )
 
     def get(self, trajectory_id: str) -> dict | None:
         row = self._conn.execute(
-            "SELECT trajectory_id, steps_json FROM trajectories WHERE trajectory_id=?",
+            "SELECT trajectory_id, steps_json, raw_json FROM trajectories"
+            " WHERE trajectory_id=?",
             (trajectory_id,),
         ).fetchone()
         if row is None:
@@ -253,6 +278,8 @@ class SqliteTrajectoryStore:
         return {
             "trajectory_id": row["trajectory_id"],
             "steps": json.loads(row["steps_json"]),
+            # 老行/未提供时为 None → 前端据此置灰 Raw JSON 按钮。
+            "raw": json.loads(row["raw_json"]) if row["raw_json"] else None,
         }
 
     def count(self) -> int:

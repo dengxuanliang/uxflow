@@ -389,9 +389,22 @@ async def run_ingest(
             # （check_same_thread=False + WAL + autocommit）。
             nonlocal traj_ingested
             traj_ingested += 1
-            if deps.trajectory_store is not None:
+            if deps.trajectory_store is None:
+                return
+            steps = [_step_to_dict(s) for s in traj.steps]
+            # 原封不动的 OpenAI messages 一并落库，供前端 Raw JSON 视图 ——
+            # steps 扁平化丢掉了 tool_call_id / tool_calls[].id，只能从这里找回。
+            # getattr 兜底鸭子类型的轨迹对象（测试 fake、下游自定义实现）。
+            raw_messages = getattr(traj, "raw_messages", None)
+            raw_json = (json.dumps(raw_messages, ensure_ascii=False)
+                        if raw_messages else None)
+            try:
                 deps.trajectory_store.upsert(
-                    traj.id, [_step_to_dict(s) for s in traj.steps], source_path=src)
+                    traj.id, steps, source_path=src, raw_json=raw_json)
+            except TypeError:
+                # 老 TrajectoryStore 的 upsert 不接受 raw_json —— 降级为不存 raw，
+                # 而不是让整个入库失败。Raw JSON 是增强，不该成为必需契约。
+                deps.trajectory_store.upsert(traj.id, steps, source_path=src)
 
         _PHASE_MSG = {"slicing": "切片", "embedding": "向量化", "writing": "写入索引"}
 
