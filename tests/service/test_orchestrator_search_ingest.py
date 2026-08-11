@@ -436,3 +436,73 @@ async def test_run_ingest_plain_text_line_passes_none_evidence(tmp_path):
     )
     await run_ingest(manifest_lines=["纯文本问题"], deps=deps, emit=lambda e: None)
     assert compiler.evidence_seen == [None]
+
+
+# ── 12. P1: 同步入库段不得饿死事件循环 ────────────────────────────────
+class BlockingPipeline:
+    """ingest_trajectories 阻塞 BLOCK_S 秒（模拟真实的切片+签名+embed 同步段）。"""
+
+    BLOCK_S = 0.30
+
+    def __init__(self):
+        self.ingest_calls = []
+        self.thread_name = None
+
+    def ingest_trajectories(self, paths, *, on_trajectory=None):
+        import threading
+        import time
+        self.ingest_calls.append(list(paths))
+        self.thread_name = threading.current_thread().name
+        time.sleep(self.BLOCK_S)      # 真阻塞，不是 await
+
+
+async def test_ingest_does_not_starve_event_loop():
+    """入库期间事件循环必须仍在调度其他协程。
+
+    这是「停止」按钮/SSE 心跳/计时器能不能动的地基：同步段直接跑在 loop 上时
+    心跳一次都发不出（实测 0 次），挪进线程后恢复（实测 ~18 次）。
+    """
+    import asyncio
+
+    pipeline = BlockingPipeline()
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=pipeline, select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=FakeTrajectoryStore(),
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+
+    ticks = 0
+    stop = asyncio.Event()
+
+    async def heartbeat():
+        nonlocal ticks
+        while not stop.is_set():
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    hb = asyncio.create_task(heartbeat())
+    await run_ingest(trajectory_path="traj.jsonl", deps=deps, emit=lambda e: None)
+    stop.set()
+    await hb
+
+    assert pipeline.ingest_calls == [["traj.jsonl"]]
+    # 同步跑在 loop 上 → ticks == 0；挪进工作线程 → 应有可观的心跳数。
+    assert ticks > 5, f"事件循环被饿死，入库 {BlockingPipeline.BLOCK_S}s 期间只调度了 {ticks} 次"
+
+
+async def test_ingest_runs_off_the_event_loop_thread():
+    """同步段必须在工作线程执行，而不是事件循环所在线程。"""
+    import asyncio
+    import threading
+
+    loop_thread = threading.current_thread().name
+    pipeline = BlockingPipeline()
+    pipeline.BLOCK_S = 0.0        # 本例只关心线程身份，无需真阻塞
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=pipeline, select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=FakeTrajectoryStore(),
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    await run_ingest(trajectory_path="traj.jsonl", deps=deps, emit=lambda e: None)
+    assert pipeline.thread_name is not None
+    assert pipeline.thread_name != loop_thread

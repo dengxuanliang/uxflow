@@ -8,6 +8,7 @@ Emits progress events keyed by pipeline stage.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import pathlib
 from dataclasses import asdict, dataclass
@@ -104,6 +105,32 @@ def _compress_failure_trajectory(
     if len(text) > _MAX_EVIDENCE_CHARS:
         text = text[:_MAX_EVIDENCE_CHARS] + "\n...(截断)"
     return text
+
+
+async def _offload(fn, *args, **kwargs):
+    """把同步阻塞段挪出事件循环，且取消时不留孤儿线程。
+
+    为什么不裸 `await asyncio.to_thread(...)`：run_ingest 由 app 层的 _run_lock
+    串行化，用的是同一个 deps.pipeline 实例，写的是同一套 store。裸 to_thread 在
+    取消时会让协程立刻解锁返回，而工作线程仍在改 pipeline._store / 写库 —— 用户
+    紧接着发起的下一次入库就会与这个孤儿线程并发写，索引被写坏。app.py 的 finally
+    还会 unlink 上传的临时文件，孤儿线程可能正在读它。
+
+    线程无法从外部中断，所以取消时只能 shield 住等它自己跑完再把 CancelledError
+    传上去：调用方失去的只是"立刻返回"，换来的是锁释放时后台确实已经收工。
+    与 module1/pipeline.py:150 的 _build_index 卸载同款处理。
+    """
+    task = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # 重复取消也不能放弃这个 task —— 循环 shield 直到线程真正结束。
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+        raise
 
 
 @dataclass
@@ -356,13 +383,20 @@ async def run_ingest(
         emit({"stage": "ingest_traj", "status": "running", "msg": "切片+签名+写库..."})
 
         def on_traj(traj, src):
+            # 在工作线程里被回调：_offload 只起一个线程跑整段，on_traj 不存在并发
+            # 调用，nonlocal 累加无竞态。store 侧跨线程安全见 stores.py:95-99
+            # （check_same_thread=False + WAL + autocommit）。
             nonlocal traj_ingested
             traj_ingested += 1
             if deps.trajectory_store is not None:
                 deps.trajectory_store.upsert(
                     traj.id, [_step_to_dict(s) for s in traj.steps], source_path=src)
 
-        deps.pipeline.ingest_trajectories([trajectory_path], on_trajectory=on_traj)
+        # 切片+签名+embed 是整条链路最重的同步段，直接跑在事件循环上会让 SSE 心跳、
+        # 计时器、/stats 和「停止」按钮全部失联（实测入库期间心跳 0 次）。
+        await _offload(
+            deps.pipeline.ingest_trajectories,
+            [trajectory_path], on_trajectory=on_traj)
 
     if manifest_lines:
         for i, raw in enumerate(manifest_lines):
@@ -373,7 +407,7 @@ async def run_ingest(
                 # PR-2: 结构化行取 question；failure_trajectory 非 None 时压缩喂 Call 2。
                 # 纯文本行 failure_trajectory 恒 None，dedup/compile/入库口径逐字不变。
                 question, failure_trajectory = _parse_manifest_line(line)
-                emb = deps.embedder.embed(question)
+                emb = await _offload(deps.embedder.embed, question)
                 hit = deps.problem_store.nearest(emb)
                 if hit is not None and hit[1] >= tau_q:
                     skipped += 1
