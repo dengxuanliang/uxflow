@@ -348,11 +348,16 @@ async def run_ingest(
     from service.viewmodel import _step_to_dict
 
     added = skipped = failed = 0
+    # None = 本次没传轨迹文件；0 = 传了但一条都没解析出来（两者必须可区分）
+    traj_ingested: int | None = None
 
     if trajectory_path is not None:
+        traj_ingested = 0
         emit({"stage": "ingest_traj", "status": "running", "msg": "切片+签名+写库..."})
 
         def on_traj(traj, src):
+            nonlocal traj_ingested
+            traj_ingested += 1
             if deps.trajectory_store is not None:
                 deps.trajectory_store.upsert(
                     traj.id, [_step_to_dict(s) for s in traj.steps], source_path=src)
@@ -392,8 +397,10 @@ async def run_ingest(
                 emit({"stage": "ingest_manifest", "status": "running",
                       "msg": f"第{i + 1}行失败: {exc}"})
 
+    traj_msg = "" if traj_ingested is None else f"处理轨迹 {traj_ingested} 条, "
     emit({"stage": "done", "status": "ok",
-          "msg": f"入库 {added} 问题, 跳过 {skipped}, 失败 {failed}"})
+          "msg": f"{traj_msg}入库 {added} 问题, 跳过 {skipped}, 失败 {failed}"})
     view = {"mode": "ingest",
-            "summary": {"added": added, "skipped_dup": skipped, "failed": failed}}
+            "summary": {"added": added, "skipped_dup": skipped, "failed": failed,
+                        "traj_ingested": traj_ingested}}
     return view, {}

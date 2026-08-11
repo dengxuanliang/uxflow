@@ -276,7 +276,28 @@ async def test_run_ingest_trajectory_only(tmp_path):
     assert pipeline.ingest_calls == [["traj.jsonl"]]
     assert len(tstore.upsert_calls) == 1
     assert tstore.upsert_calls[0][0] == "t1"
-    assert view["summary"]["added"] == 0
+    assert view["summary"]["added"] == 0        # 无清单 → 问题计数为 0
+    assert view["summary"]["traj_ingested"] == 1
+
+
+# ── 4b. run_ingest 传了轨迹但一条都没解析出来 ────────────────────────
+async def test_run_ingest_empty_trajectory_file_counts_zero_not_none(tmp_path):
+    """空/全非法的轨迹文件 → traj_ingested 是 0，不是 None。
+
+    前端按 `!= null` 门控该段：0 要显示"处理轨迹 0 条"（传了但没解析出东西，
+    是用户需要看到的信号），None 才整段隐藏（压根没传轨迹）。
+    """
+    pipeline = FakePipeline(trajectories=[])       # 文件里没有可解析的轨迹
+    tstore = FakeTrajectoryStore()
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=pipeline, select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=tstore,
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    view, _ = await run_ingest(trajectory_path="empty.jsonl", deps=deps,
+                               emit=lambda e: None)
+    assert tstore.upsert_calls == []
+    assert view["summary"]["traj_ingested"] == 0
 
 
 # ── 5. run_ingest 仅清单 ─────────────────────────────────────────────
@@ -293,6 +314,7 @@ async def test_run_ingest_manifest_only(tmp_path):
     assert view["summary"]["added"] == 2
     assert view["summary"]["skipped_dup"] == 0
     assert view["summary"]["failed"] == 0
+    assert view["summary"]["traj_ingested"] is None   # 没传轨迹 ≠ 传了但 0 条
 
 
 # ── 6. run_ingest 去重跳过 ───────────────────────────────────────────
@@ -345,6 +367,7 @@ async def test_run_ingest_both_trajectory_and_manifest(tmp_path):
     assert len(tstore.upsert_calls) == 1
     assert len(store.add_calls) == 1
     assert view["summary"]["added"] == 1
+    assert view["summary"]["traj_ingested"] == 1
 
 
 # ── 9. PipelineDeps 向后兼容（四个位置参数）─────────────────────────

@@ -530,7 +530,11 @@ async function loadView(runId, myGen) {
     const s = state.view.summary || {};
     $("workspace").classList.add("hidden");
     hideDedupBanner();
-    setMsg(`入库完成：新增 ${s.added ?? 0} · 跳过重复 ${s.skipped_dup ?? 0} · 失败 ${s.failed ?? 0}`);
+    // traj_ingested 为 null/缺失 = 本次没传轨迹（含老 runs 的 view）→ 不显示该段
+    const parts = [];
+    if (s.traj_ingested != null) parts.push(`处理轨迹 ${s.traj_ingested} 条`);
+    parts.push(`新增 ${s.added ?? 0} 问题`, `跳过重复 ${s.skipped_dup ?? 0}`, `失败 ${s.failed ?? 0}`);
+    setMsg(`入库完成：${parts.join(" · ")}`);
     loadStats();
     return;
   }
