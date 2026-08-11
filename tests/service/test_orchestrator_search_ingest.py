@@ -492,7 +492,6 @@ async def test_ingest_does_not_starve_event_loop():
 
 async def test_ingest_runs_off_the_event_loop_thread():
     """同步段必须在工作线程执行，而不是事件循环所在线程。"""
-    import asyncio
     import threading
 
     loop_thread = threading.current_thread().name
@@ -506,3 +505,63 @@ async def test_ingest_runs_off_the_event_loop_thread():
     await run_ingest(trajectory_path="traj.jsonl", deps=deps, emit=lambda e: None)
     assert pipeline.thread_name is not None
     assert pipeline.thread_name != loop_thread
+
+
+# ── 13. 入库进度事件：前端据此渲染 determinate 进度条 ─────────────────
+class ProgressPipeline:
+    """按真实 pipeline 的契约回调 on_progress 三阶段。"""
+
+    def __init__(self):
+        self.ingest_calls = []
+
+    def ingest_trajectories(self, paths, *, on_trajectory=None, on_progress=None):
+        self.ingest_calls.append(list(paths))
+        if on_progress is None:
+            return
+        for i in (1, 2, 3):
+            on_progress("slicing", i, 3)
+        on_progress("embedding", 5, 5)
+        on_progress("writing", 0, 5)
+        on_progress("writing", 5, 5)
+
+
+async def test_ingest_emits_progress_with_index_and_total():
+    """进度事件必须带 index/total —— 前端靠这两个字段走 determinate 分支，
+    缺了就退回无限扫动（用户看不到卡在哪、不知该不该停）。"""
+    pipeline = ProgressPipeline()
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=pipeline, select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=FakeTrajectoryStore(),
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    events = []
+    await run_ingest(trajectory_path="traj.jsonl", deps=deps,
+                     emit=lambda e: events.append(e))
+
+    prog = [e for e in events if e.get("phase") is not None]
+    assert prog, "一条进度事件都没发"
+    for e in prog:
+        assert e["stage"] == "ingest_traj"
+        assert isinstance(e["index"], int) and isinstance(e["total"], int)
+        assert 0 <= e["index"] <= e["total"]
+        assert e["msg"]                      # 文案非空，用户要看到阶段名
+
+    assert {e["phase"] for e in prog} == {"slicing", "embedding", "writing"}
+    # 中文阶段名要落到 msg 里
+    assert any("切片" in e["msg"] for e in prog)
+    assert any("向量化" in e["msg"] for e in prog)
+    assert any("写入索引" in e["msg"] for e in prog)
+
+
+async def test_ingest_without_progress_support_still_works():
+    """老 pipeline（不接受 on_progress）不得因此报错。"""
+    pipeline = BlockingPipeline()
+    pipeline.BLOCK_S = 0.0
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=pipeline, select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=FakeTrajectoryStore(),
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    view, _ = await run_ingest(trajectory_path="traj.jsonl", deps=deps,
+                               emit=lambda e: None)
+    assert view["summary"]["traj_ingested"] == 0

@@ -202,30 +202,45 @@ class TrajectoryPipeline:
                     self._store.add(sig)
                     self._store.set_slice_source(sl.trajectory_id, sl.slice_index, sl)
 
-    def ingest_trajectories(self, trajectory_paths, *, on_trajectory=None):
+    def ingest_trajectories(self, trajectory_paths, *, on_trajectory=None,
+                            on_progress=None):
         """写路径: 增量 build index 到当前 self._store（持久 store 由 store_factory 注入），
         不 reset。on_trajectory(traj, source_path) 可选回调，用于把全文交给 TrajectoryStore。
 
         embedding 走批量：先把全部切片的签名算出来（纯 CPU，不含向量），再按
         _EMBED_CHUNK 分块 embed_batch 回填。模型调用数 N → ceil(N/64)，这是本路径
         最贵的一环（每次入库都付，非一次性成本）。
+
+        on_progress(phase, done, total) 可选回调，phase ∈ {"slicing","embedding","writing"}。
+        embedding 阶段每完成一个 chunk 报一次 —— 批量化把 N 次小调用压成
+        ceil(N/64) 次大调用，总时间更短，但单步不可观测，必须显式报进度。
         """
         emb_model = self._config.embedding_model
         pending: list[tuple[object, object]] = []      # (signature, slice)
         texts: list[str] = []
 
+        # 预加载所有文件，数出轨迹总数 —— 避免多文件时 per-path 进度重置
+        # （例：a.jsonl 3 条、b.jsonl 2 条 → 若按文件各自 enumerate，前端
+        # 会收到 1/3 2/3 3/3 跳回 1/2 2/2，进度条冲满再退回）。
+        all_trajectories = []
         for path in trajectory_paths:
             path = pathlib.Path(path)
-            trajectories = load_trajectories(path)
-            for traj in trajectories:
-                self._traj_paths[traj.id] = str(path)
-                if on_trajectory is not None:
-                    on_trajectory(traj, str(path))
-                for sl in slice_trajectory(traj):
-                    # embedding_model=None → 只算结构化字段；向量在下面统一回填。
-                    sig = extract_signature(sl, embedding_model=None)
-                    pending.append((sig, sl))
-                    texts.append(build_embedding_text(sl))
+            trajs = load_trajectories(path)
+            all_trajectories.extend((traj, str(path)) for traj in trajs)
+
+        n_done = 0
+        for traj, src_path in all_trajectories:
+            self._traj_paths[traj.id] = src_path
+            if on_trajectory is not None:
+                on_trajectory(traj, src_path)
+            for sl in slice_trajectory(traj):
+                # embedding_model=None → 只算结构化字段；向量在下面统一回填。
+                sig = extract_signature(sl, embedding_model=None)
+                pending.append((sig, sl))
+                texts.append(build_embedding_text(sl))
+            n_done += 1
+            if on_progress is not None:
+                on_progress("slicing", n_done, len(all_trajectories))
 
         if emb_model is not None and texts:
             for start in range(0, len(texts), _EMBED_CHUNK):
@@ -235,12 +250,18 @@ class TrajectoryPipeline:
                 # data[].index 排序后再映射，见 api.py:68），故 zip 对齐成立。
                 for (sig, _), vec in zip(pending[start:start + len(chunk)], vectors):
                     sig.embedding = vec
+                if on_progress is not None:
+                    on_progress("embedding", min(start + len(chunk), len(texts)), len(texts))
 
         # add_batch 走 executemany（sqlite_store.py:150），N 次单条 INSERT 各自
         # autocommit → 1 次批量提交。维度校验仍在，只是从"第 k 条失败"变成整批失败。
+        if on_progress is not None:
+            on_progress("writing", 0, len(pending))
         self._store.add_batch([sig for sig, _ in pending])
         for _, sl in pending:
             self._store.set_slice_source(sl.trajectory_id, sl.slice_index, sl)
+        if on_progress is not None:
+            on_progress("writing", len(pending), len(pending))
 
     async def _process_sub_problem(
         self, sub_problem: dict, spec_id: str

@@ -140,3 +140,89 @@ def test_chunking_splits_large_batches(tmp_path):
         for sl in slice_trajectory(traj):
             want = CountingEmbedder._vec(build_embedding_text(sl))
             assert by_key[(sl.trajectory_id, sl.slice_index)].embedding == want
+
+
+# ── on_progress: 入库三阶段可观测性 ──────────────────────────────────
+def test_on_progress_reports_three_phases(trajectories_path):
+    """三个阶段都要报：切片 / 向量化 / 写库。"""
+    emb = CountingEmbedder()
+    p = TrajectoryPipeline(config=_cfg(embedding_model=emb), gateway=None)
+    seen = []
+    p.ingest_trajectories([trajectories_path],
+                          on_progress=lambda ph, d, t: seen.append((ph, d, t)))
+
+    phases = [ph for ph, _, _ in seen]
+    assert "slicing" in phases
+    assert "embedding" in phases
+    assert "writing" in phases
+    # 阶段顺序不得乱：切片全部先于向量化，向量化全部先于写库。
+    assert phases.index("embedding") > len([x for x in phases if x == "slicing"]) - 1
+    assert phases.index("writing") > phases.index("embedding")
+
+
+def test_progress_done_never_exceeds_total(trajectories_path):
+    """任何阶段都不许出现 done > total（off-by-one 会让进度条冲过 100%）。"""
+    emb = CountingEmbedder()
+    p = TrajectoryPipeline(config=_cfg(embedding_model=emb), gateway=None)
+    seen = []
+    p.ingest_trajectories([trajectories_path],
+                          on_progress=lambda ph, d, t: seen.append((ph, d, t)))
+    for phase, done, total in seen:
+        assert 0 <= done <= total, f"{phase}: done={done} total={total}"
+
+
+def test_slicing_progress_is_monotonic_across_multiple_files(tmp_path):
+    """多文件输入时切片进度必须全局单调递增，不得按文件重置。
+
+    按文件各自计数会让前端收到 1/3 2/3 3/3 然后 1/2 2/2 —— 进度条冲满
+    再退回，比不显示更糟。
+    """
+    import json
+
+    def write(name, n):
+        path = tmp_path / name
+        path.write_text("\n".join(json.dumps({
+            "id": f"{name}_{i}",
+            "messages": [{"role": "user", "content": f"q{i}"},
+                         {"role": "assistant", "content": f"a{i}"}],
+        }) for i in range(n)), encoding="utf-8")
+        return path
+
+    a, b = write("a.jsonl", 3), write("b.jsonl", 2)
+    emb = CountingEmbedder()
+    p = TrajectoryPipeline(config=_cfg(embedding_model=emb), gateway=None)
+    seen = []
+    p.ingest_trajectories([a, b], on_progress=lambda ph, d, t: seen.append((ph, d, t)))
+
+    slicing = [(d, t) for ph, d, t in seen if ph == "slicing"]
+    assert slicing == [(1, 5), (2, 5), (3, 5), (4, 5), (5, 5)], slicing
+
+
+def test_embedding_progress_reports_每个_chunk(tmp_path):
+    """向量化按 chunk 报进度 —— 这是最慢的一段，静默等于假死。"""
+    import json
+    from module1.pipeline import _EMBED_CHUNK
+
+    n = _EMBED_CHUNK + 6
+    path = tmp_path / "many.jsonl"
+    path.write_text("\n".join(json.dumps({
+        "id": f"t{i}",
+        "messages": [{"role": "user", "content": f"q{i}"},
+                     {"role": "assistant", "content": f"a{i}"}],
+    }) for i in range(n)), encoding="utf-8")
+
+    emb = CountingEmbedder()
+    p = TrajectoryPipeline(config=_cfg(embedding_model=emb), gateway=None)
+    seen = []
+    p.ingest_trajectories([path], on_progress=lambda ph, d, t: seen.append((ph, d, t)))
+
+    embedding = [(d, t) for ph, d, t in seen if ph == "embedding"]
+    assert embedding == [(_EMBED_CHUNK, n), (n, n)], embedding
+
+
+def test_on_progress_is_optional(trajectories_path):
+    """不传 on_progress 不得报错（向后兼容既有调用方）。"""
+    emb = CountingEmbedder()
+    p = TrajectoryPipeline(config=_cfg(embedding_model=emb), gateway=None)
+    p.ingest_trajectories([trajectories_path])      # 不传
+    assert p._store.size > 0

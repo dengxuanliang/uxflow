@@ -48,6 +48,8 @@ let state = {
   compileFirstDoneAt: null,  // wall time when first complaint finished compiling
   compileFirstDoneN: null,   // `done` count observed when the anchor was set
   compileTotal: 0,
+  embedFirstAt: null,        // wall time at the first embedding chunk (ETA anchor)
+  embedFirstN: null,         // slice count observed when that anchor was set
   stopping: false,
   runGen: 0,                 // per-run generation token; isolates stop/rerun races
   currentDbName: null,       // basename of the current DB, for the stats line
@@ -384,6 +386,8 @@ function resetProgress() {
   state.compileFirstDoneAt = null;
   state.compileFirstDoneN = null;
   state.compileTotal = 0;
+  state.embedFirstAt = null;
+  state.embedFirstN = null;
   $("prog-count").textContent = "";
   $("prog-eta").textContent = "";
   $("prog-elapsed").textContent = "⏱ 0:00";
@@ -503,6 +507,28 @@ function handleEvent(ev) {
       $("prog-eta").textContent = `编译约剩 ~${fmtDur(remain)}`;
     }
     if (done >= total) $("prog-eta").textContent = "";
+  } else if (ev.stage === "ingest_traj" && total > 0 && ev.phase) {
+    // 入库三阶段各有自己的 total（轨迹数 vs 切片数），直接 done/total 会让进度条
+    // 在阶段切换时从满退回空。按耗时占比分段映射到全局 0..1，保证单调不倒退：
+    // 切片 0~15%（纯 CPU，快）、向量化 15~95%（模型前向，最慢）、写库 95~100%。
+    const SEG = { slicing: [0, 0.15], embedding: [0.15, 0.95], writing: [0.95, 1] };
+    const [lo, hi] = SEG[ev.phase] || [0, 1];
+    $("prog-count").textContent = ev.msg;
+    setBarFraction(lo + (hi - lo) * (done / total));
+
+    // ETA 只在向量化阶段外推：它占绝大部分时间，且按 chunk 均匀推进，是唯一
+    // 能诚实估算的一段。done === total 时不设锚点（单 chunk 直接满，估不出）。
+    if (ev.phase === "embedding" && done >= 1 && done < total) {
+      if (state.embedFirstAt === null) {
+        state.embedFirstAt = Date.now();
+        state.embedFirstN = done;
+      } else if (done > state.embedFirstN) {
+        const perItem = (Date.now() - state.embedFirstAt) / (done - state.embedFirstN) / 1000;
+        $("prog-eta").textContent = `向量化约剩 ~${fmtDur(perItem * (total - done))}`;
+      }
+    } else if (ev.phase === "writing") {
+      $("prog-eta").textContent = "";
+    }
   } else if (ev.stage === "module1" && total > 0 && done >= 1) {
     // Judge phase: determinate "精判 i/N" bar (no ETA — per-sub_problem judge
     // cost varies too much to extrapolate honestly).

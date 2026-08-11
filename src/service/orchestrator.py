@@ -9,6 +9,7 @@ Emits progress events keyed by pipeline stage.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import pathlib
 from dataclasses import asdict, dataclass
@@ -380,7 +381,7 @@ async def run_ingest(
 
     if trajectory_path is not None:
         traj_ingested = 0
-        emit({"stage": "ingest_traj", "status": "running", "msg": "切片+签名+写库..."})
+        emit({"stage": "ingest_traj", "status": "running", "msg": "准备入库..."})
 
         def on_traj(traj, src):
             # 在工作线程里被回调：_offload 只起一个线程跑整段，on_traj 不存在并发
@@ -392,11 +393,32 @@ async def run_ingest(
                 deps.trajectory_store.upsert(
                     traj.id, [_step_to_dict(s) for s in traj.steps], source_path=src)
 
+        _PHASE_MSG = {"slicing": "切片", "embedding": "向量化", "writing": "写入索引"}
+
+        def on_prog(phase, done, total):
+            # 在工作线程里被回调：append_event 本身线程安全（list.append + dict
+            # 查都受 GIL 保护），只是 notify 机制走不到（runstore.py:82 的
+            # RuntimeError 分支），靠 subscribe() 的 0.5s 轮询兜底。实测送达延迟
+            # ~250ms，相对入库的数十秒~数分钟量级完全可接受。
+            emit({"stage": "ingest_traj", "status": "running",
+                  "msg": f"{_PHASE_MSG.get(phase, phase)} {done}/{total}",
+                  "index": done, "total": total, "phase": phase})
+
         # 切片+签名+embed 是整条链路最重的同步段，直接跑在事件循环上会让 SSE 心跳、
         # 计时器、/stats 和「停止」按钮全部失联（实测入库期间心跳 0 次）。
+        #
+        # on_progress 是后加的可选能力：注入式 pipeline（测试 fake、下游自定义
+        # 实现）可能仍是老签名，无脑传会 TypeError 炸掉整个入库。探测形参后再决定
+        # 传不传 —— 进度显示是增强，不该成为新的必需契约。
+        kwargs = {"on_trajectory": on_traj}
+        try:
+            params = inspect.signature(deps.pipeline.ingest_trajectories).parameters
+        except (TypeError, ValueError):     # 内建/C 实现取不到签名
+            params = {}
+        if "on_progress" in params:
+            kwargs["on_progress"] = on_prog
         await _offload(
-            deps.pipeline.ingest_trajectories,
-            [trajectory_path], on_trajectory=on_traj)
+            deps.pipeline.ingest_trajectories, [trajectory_path], **kwargs)
 
     if manifest_lines:
         for i, raw in enumerate(manifest_lines):
