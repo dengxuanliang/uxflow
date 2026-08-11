@@ -5,6 +5,8 @@
 必须是**自己**那段文本的向量（zip 错位是这类改动最隐蔽的 bug —— 不报错，只让
 召回结果莫名其妙地差）。
 """
+import pytest
+
 from module1.pipeline import TrajectoryPipeline, PipelineConfig
 from module1.signature import build_embedding_text, extract_signature
 from module1.slicer import slice_trajectory
@@ -226,3 +228,47 @@ def test_on_progress_is_optional(trajectories_path):
     p = TrajectoryPipeline(config=_cfg(embedding_model=emb), gateway=None)
     p.ingest_trajectories([trajectories_path])      # 不传
     assert p._store.size > 0
+
+
+# ── 回归：进度回调与批量返回的健壮性 ─────────────────────────────────
+def test_progress_callback_failure_does_not_abort_ingest(trajectories_path):
+    """on_progress 抛异常不得中止入库。
+
+    回调那头是 SSE/前端，断连或序列化失败都可能抛。而 add_batch 在最末尾 —— 让
+    异常冒泡等于整批白干（回归前实测：20 条轨迹一条都没入库）。
+    """
+    emb = CountingEmbedder()
+    p = TrajectoryPipeline(config=_cfg(embedding_model=emb), gateway=None)
+
+    def boom(phase, done, total):
+        raise RuntimeError("前端断开")
+
+    p.ingest_trajectories([trajectories_path], on_progress=boom)
+    assert p._store.size > 0, "进度回调把整个入库炸掉了"
+
+
+def test_short_embed_batch_raises_instead_of_silently_truncating(trajectories_path):
+    """embed_batch 少返回时必须报错，不能让切片带空向量入库。
+
+    zip 遇到短列表会静默截断 —— 尾部切片 embedding 为 []，不报错，只是在向量
+    召回里永远命不中。这类静默腐化比直接失败危险得多。
+    """
+    class ShortEmbedder(CountingEmbedder):
+        def embed_batch(self, texts):
+            return super().embed_batch(texts)[:-1]      # 少一条
+
+    p = TrajectoryPipeline(config=_cfg(embedding_model=ShortEmbedder()), gateway=None)
+    with pytest.raises(ValueError, match="与输入"):
+        p.ingest_trajectories([trajectories_path])
+
+
+def test_long_embed_batch_also_raises(trajectories_path):
+    """多返回同样要报错 —— 说明 provider 契约已破，不该继续写库。"""
+    class LongEmbedder(CountingEmbedder):
+        def embed_batch(self, texts):
+            out = super().embed_batch(texts)
+            return out + [out[0]]                       # 多一条
+
+    p = TrajectoryPipeline(config=_cfg(embedding_model=LongEmbedder()), gateway=None)
+    with pytest.raises(ValueError, match="与输入"):
+        p.ingest_trajectories([trajectories_path])

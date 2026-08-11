@@ -219,6 +219,17 @@ class TrajectoryPipeline:
         pending: list[tuple[object, object]] = []      # (signature, slice)
         texts: list[str] = []
 
+        def _report(phase, done, total):
+            # 进度上报绝不能中止入库：回调那头是 SSE/前端，断连或序列化失败都可能
+            # 抛，而此时 add_batch 还没执行 —— 让它冒泡等于整批白干（实测 20 条
+            # 轨迹一条都进不去）。同 run_scored 对 on_progress 的处理。
+            if on_progress is None:
+                return
+            try:
+                on_progress(phase, done, total)
+            except Exception:  # noqa: BLE001 — 进度是增强，不该有能力中止写入
+                pass
+
         # 预加载所有文件，数出轨迹总数 —— 避免多文件时 per-path 进度重置
         # （例：a.jsonl 3 条、b.jsonl 2 条 → 若按文件各自 enumerate，前端
         # 会收到 1/3 2/3 3/3 跳回 1/2 2/2，进度条冲满再退回）。
@@ -239,29 +250,32 @@ class TrajectoryPipeline:
                 pending.append((sig, sl))
                 texts.append(build_embedding_text(sl))
             n_done += 1
-            if on_progress is not None:
-                on_progress("slicing", n_done, len(all_trajectories))
+            _report("slicing", n_done, len(all_trajectories))
 
         if emb_model is not None and texts:
             for start in range(0, len(texts), _EMBED_CHUNK):
                 chunk = texts[start:start + _EMBED_CHUNK]
                 vectors = emb_model.embed_batch(chunk)
+                # 数量必须严格相等：zip 遇到短列表会**静默截断**，尾部切片就带着
+                # 空向量入库 —— 不报错，只是在向量召回里永远命不中。宁可炸掉本次
+                # 入库，也不要悄悄写坏索引。
+                if len(vectors) != len(chunk):
+                    raise ValueError(
+                        f"embed_batch 返回 {len(vectors)} 条，与输入 {len(chunk)} 条不符"
+                        f"（chunk 起始位置 {start}）")
                 # 位置映射：embed_batch 按输入顺序返回（ApiEmbedder 显式按
                 # data[].index 排序后再映射，见 api.py:68），故 zip 对齐成立。
                 for (sig, _), vec in zip(pending[start:start + len(chunk)], vectors):
                     sig.embedding = vec
-                if on_progress is not None:
-                    on_progress("embedding", min(start + len(chunk), len(texts)), len(texts))
+                _report("embedding", min(start + len(chunk), len(texts)), len(texts))
 
         # add_batch 走 executemany（sqlite_store.py:150），N 次单条 INSERT 各自
         # autocommit → 1 次批量提交。维度校验仍在，只是从"第 k 条失败"变成整批失败。
-        if on_progress is not None:
-            on_progress("writing", 0, len(pending))
+        _report("writing", 0, len(pending))
         self._store.add_batch([sig for sig, _ in pending])
         for _, sl in pending:
             self._store.set_slice_source(sl.trajectory_id, sl.slice_index, sl)
-        if on_progress is not None:
-            on_progress("writing", len(pending), len(pending))
+        _report("writing", len(pending), len(pending))
 
     async def _process_sub_problem(
         self, sub_problem: dict, spec_id: str
