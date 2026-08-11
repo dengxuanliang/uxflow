@@ -16,13 +16,18 @@ from typing import Callable
 from module1.models import SFTCandidate, JudgeResult
 from module1.loader import load_trajectories
 from module1.slicer import slice_trajectory
-from module1.signature import extract_signature
+from module1.signature import build_embedding_text, extract_signature
 from module1.index import MemoryIndex
 from module1.judge import Judge
 from module2.models import ScoredCandidate
 from module2.rerank import rerank
 
 __all__ = ["TrajectoryPipeline", "PipelineConfig"]
+
+# 一次 embed_batch 最多喂多少条。ApiEmbedder 把整批塞进单个 HTTP 请求
+# （api.py:65），不分块会撞 provider 的 input 条数/token 上限；LocalEmbedder
+# 内部另有 batch_size=32 的二次切分，分块对它无害。
+_EMBED_CHUNK = 64
 
 
 def _dict_to_judge_result(d: dict) -> "JudgeResult":
@@ -199,7 +204,16 @@ class TrajectoryPipeline:
 
     def ingest_trajectories(self, trajectory_paths, *, on_trajectory=None):
         """写路径: 增量 build index 到当前 self._store（持久 store 由 store_factory 注入），
-        不 reset。on_trajectory(traj, source_path) 可选回调，用于把全文交给 TrajectoryStore。"""
+        不 reset。on_trajectory(traj, source_path) 可选回调，用于把全文交给 TrajectoryStore。
+
+        embedding 走批量：先把全部切片的签名算出来（纯 CPU，不含向量），再按
+        _EMBED_CHUNK 分块 embed_batch 回填。模型调用数 N → ceil(N/64)，这是本路径
+        最贵的一环（每次入库都付，非一次性成本）。
+        """
+        emb_model = self._config.embedding_model
+        pending: list[tuple[object, object]] = []      # (signature, slice)
+        texts: list[str] = []
+
         for path in trajectory_paths:
             path = pathlib.Path(path)
             trajectories = load_trajectories(path)
@@ -208,9 +222,25 @@ class TrajectoryPipeline:
                 if on_trajectory is not None:
                     on_trajectory(traj, str(path))
                 for sl in slice_trajectory(traj):
-                    sig = extract_signature(sl, embedding_model=self._config.embedding_model)
-                    self._store.add(sig)
-                    self._store.set_slice_source(sl.trajectory_id, sl.slice_index, sl)
+                    # embedding_model=None → 只算结构化字段；向量在下面统一回填。
+                    sig = extract_signature(sl, embedding_model=None)
+                    pending.append((sig, sl))
+                    texts.append(build_embedding_text(sl))
+
+        if emb_model is not None and texts:
+            for start in range(0, len(texts), _EMBED_CHUNK):
+                chunk = texts[start:start + _EMBED_CHUNK]
+                vectors = emb_model.embed_batch(chunk)
+                # 位置映射：embed_batch 按输入顺序返回（ApiEmbedder 显式按
+                # data[].index 排序后再映射，见 api.py:68），故 zip 对齐成立。
+                for (sig, _), vec in zip(pending[start:start + len(chunk)], vectors):
+                    sig.embedding = vec
+
+        # add_batch 走 executemany（sqlite_store.py:150），N 次单条 INSERT 各自
+        # autocommit → 1 次批量提交。维度校验仍在，只是从"第 k 条失败"变成整批失败。
+        self._store.add_batch([sig for sig, _ in pending])
+        for _, sl in pending:
+            self._store.set_slice_source(sl.trajectory_id, sl.slice_index, sl)
 
     async def _process_sub_problem(
         self, sub_problem: dict, spec_id: str
