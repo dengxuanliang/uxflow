@@ -51,6 +51,11 @@ class LocalEmbedder:
     def dimension(self) -> int:
         return self._dimension
 
+    @property
+    def preferred_batch_size(self) -> int:
+        """Internal encode() uses batch_size=32; match it to avoid re-chunking."""
+        return 32
+
     def embed(self, text: str) -> list[float]:
         vec = self._model.encode(
             text, normalize_embeddings=True, output_value="sentence_embedding"

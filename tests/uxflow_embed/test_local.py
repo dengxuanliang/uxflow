@@ -31,3 +31,14 @@ def test_local_files_only_param_defaults_false():
     from uxflow_embed import LocalEmbedder
     sig = inspect.signature(LocalEmbedder.__init__)
     assert sig.parameters["local_files_only"].default is False
+
+
+def test_preferred_batch_size():
+    """LocalEmbedder declares batch 32, matching its internal encode batch_size."""
+    from uxflow_embed import LocalEmbedder
+    try:
+        import sentence_transformers  # noqa: F401
+    except ImportError:
+        pytest.skip("local-embed extra not installed")
+    emb = LocalEmbedder(local_files_only=True)
+    assert emb.preferred_batch_size == 32
