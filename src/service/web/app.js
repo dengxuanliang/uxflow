@@ -59,13 +59,23 @@ let state = {
   currentDbName: null,       // basename of the current DB, for the stats line
 };
 
-$("run").addEventListener("click", startRun);
-$("stop").addEventListener("click", stopRun);
-$("next-highlight").addEventListener("click", jumpToNextHighlight);
-$("toggle-raw").addEventListener("click", toggleRawView);
-$("btn-search").addEventListener("click", startSearch);
-$("btn-ingest").addEventListener("click", startIngest);
-$("question").addEventListener("keydown", (e) => {
+// 绑定前判空：index.html 与 app.js 通过 ?v=N 各自缓存，两者版本错配时（改了
+// app.js 忘了升 v，或浏览器只更新了其中一个）某个元素可能不存在。裸 addEventListener
+// 会在此抛 TypeError，中断后面**所有**绑定和初始化 —— 表现为整个页面失灵，
+// 而不只是少一个按钮。宁可少绑一个监听，也不能让整个前端挂掉。
+function on(id, event, handler) {
+  const el = $(id);
+  if (el) el.addEventListener(event, handler);
+  else console.warn(`[uxflow] 缺少元素 #${id} —— index.html 与 app.js 版本可能不一致，试试硬刷新`);
+}
+
+on("run", "click", startRun);
+on("stop", "click", stopRun);
+on("next-highlight", "click", jumpToNextHighlight);
+on("toggle-raw", "click", toggleRawView);
+on("btn-search", "click", startSearch);
+on("btn-ingest", "click", startIngest);
+on("question", "keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); startSearch(); }
 });
 
