@@ -34,11 +34,15 @@ def test_local_files_only_param_defaults_false():
 
 
 def test_preferred_batch_size():
-    """LocalEmbedder declares batch 32, matching its internal encode batch_size."""
+    """LocalEmbedder declares batch 32, matching its internal encode batch_size.
+
+    Read off an uninitialized instance rather than a constructed one: the value
+    is a constant that touches no instance state, while LocalEmbedder() would
+    load a ~1.1GB model (and hit the network on a cold HF cache). Going through
+    __get__ on a real instance -- rather than calling .fget() directly -- keeps
+    this honest: if the property ever starts reading self, it raises here
+    instead of silently passing. No skip guard needed; nothing imports torch.
+    """
     from uxflow_embed import LocalEmbedder
-    try:
-        import sentence_transformers  # noqa: F401
-    except ImportError:
-        pytest.skip("local-embed extra not installed")
-    emb = LocalEmbedder(local_files_only=True)
-    assert emb.preferred_batch_size == 32
+    uninitialized = object.__new__(LocalEmbedder)
+    assert uninitialized.preferred_batch_size == 32
