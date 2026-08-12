@@ -201,7 +201,11 @@ def test_slicing_progress_is_monotonic_across_multiple_files(tmp_path):
 
 
 def test_embedding_progress_reports_每个_chunk(tmp_path):
-    """向量化按 chunk 报进度 —— 这是最慢的一段，静默等于假死。"""
+    """向量化先报 0/N 再按 chunk 报进度 —— 这是最慢的一段，静默等于假死。
+
+    0/N 那条是关键：进度只在 chunk 边界更新，切片数 <= _EMBED_CHUNK 时只有一个
+    chunk，不先发这条，界面会一直停在"切片 N/N"直到整批算完，用户以为卡在切片。
+    """
     import json
     from module1.pipeline import _EMBED_CHUNK
 
@@ -219,7 +223,28 @@ def test_embedding_progress_reports_每个_chunk(tmp_path):
     p.ingest_trajectories([path], on_progress=lambda ph, d, t: seen.append((ph, d, t)))
 
     embedding = [(d, t) for ph, d, t in seen if ph == "embedding"]
-    assert embedding == [(_EMBED_CHUNK, n), (n, n)], embedding
+    assert embedding == [(0, n), (_EMBED_CHUNK, n), (n, n)], embedding
+
+
+def test_embedding_reports_start_even_for_single_chunk(trajectories_path):
+    """单 chunk（切片数 <= _EMBED_CHUNK）也必须先报 0/N。
+
+    这正是用户实测撞到的场景：5 条轨迹只有一个 chunk，修复前整段静默，
+    界面停在"切片 5/5"，真正在跑的是向量化。
+    """
+    from module1.pipeline import _EMBED_CHUNK
+
+    emb = CountingEmbedder()
+    p = TrajectoryPipeline(config=_cfg(embedding_model=emb), gateway=None)
+    seen = []
+    p.ingest_trajectories([trajectories_path],
+                          on_progress=lambda ph, d, t: seen.append((ph, d, t)))
+
+    embedding = [(d, t) for ph, d, t in seen if ph == "embedding"]
+    assert len(embedding) >= 2, f"单 chunk 也要有起止两条，实际 {embedding}"
+    assert embedding[0][0] == 0, f"首条必须是 0/N，实际 {embedding[0]}"
+    assert embedding[0][1] <= _EMBED_CHUNK, "本例应只有一个 chunk"
+    assert embedding[-1][0] == embedding[-1][1], "末条必须是 N/N"
 
 
 def test_on_progress_is_optional(trajectories_path):

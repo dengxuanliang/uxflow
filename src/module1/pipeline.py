@@ -25,9 +25,11 @@ from module2.rerank import rerank
 __all__ = ["TrajectoryPipeline", "PipelineConfig"]
 
 # 一次 embed_batch 最多喂多少条。ApiEmbedder 把整批塞进单个 HTTP 请求
-# （api.py:65），不分块会撞 provider 的 input 条数/token 上限；LocalEmbedder
-# 内部另有 batch_size=32 的二次切分，分块对它无害。
-_EMBED_CHUNK = 64
+# （api.py:65），不分块会撞 provider 的 input 条数/token 上限。
+# 取 32 而非更大：LocalEmbedder 内部本就按 batch_size=32 二次切分（local.py:67），
+# 所以对它而言 32 和 64 的计算量完全一样，但外层分块更细 → 进度更新更频繁。
+# 向量化是最慢的一段，chunk 边界是唯一的进度更新点。
+_EMBED_CHUNK = 32
 
 
 def _dict_to_judge_result(d: dict) -> "JudgeResult":
@@ -253,6 +255,10 @@ class TrajectoryPipeline:
             _report("slicing", n_done, len(all_trajectories))
 
         if emb_model is not None and texts:
+            # 先报一条 0/N：向量化是整条链路最慢的一段，而进度只在 chunk 边界更新。
+            # 切片数 <= _EMBED_CHUNK 时只有一个 chunk，不先发这条，界面会一直停在
+            # "切片 N/N" 直到整批算完 —— 用户看到的是"卡在切片"，实际在跑向量化。
+            _report("embedding", 0, len(texts))
             for start in range(0, len(texts), _EMBED_CHUNK):
                 chunk = texts[start:start + _EMBED_CHUNK]
                 vectors = emb_model.embed_batch(chunk)

@@ -517,7 +517,16 @@ function handleEvent(ev) {
     const SEG = { slicing: [0, 0.15], embedding: [0.15, 0.95], writing: [0.95, 1] };
     const [lo, hi] = SEG[ev.phase] || [0, 1];
     $("prog-count").textContent = ev.msg;
-    setBarFraction(lo + (hi - lo) * (done / total));
+
+    // 向量化的 0/N：这一批刚开始算，进度要等整个 chunk 算完才动。CPU 推理下
+    // 单批可达数十秒，此时显示静止的实心条会被读成"卡死" —— 改用 sweep 动画
+    // 表达"在跑但估不出进度"，等第一个 chunk 回来再切回确定式进度。
+    if (ev.phase === "embedding" && done === 0) {
+      setBarSweep();
+      $("prog-eta").textContent = "首批向量化中，用时取决于切片数与硬件…";
+    } else {
+      setBarFraction(lo + (hi - lo) * (done / total));
+    }
 
     // ETA 只在向量化阶段外推：它占绝大部分时间，且按 chunk 均匀推进，是唯一
     // 能诚实估算的一段。done === total 时不设锚点（单 chunk 直接满，估不出）。
@@ -525,11 +534,12 @@ function handleEvent(ev) {
       if (state.embedFirstAt === null) {
         state.embedFirstAt = Date.now();
         state.embedFirstN = done;
+        $("prog-eta").textContent = "";
       } else if (done > state.embedFirstN) {
         const perItem = (Date.now() - state.embedFirstAt) / (done - state.embedFirstN) / 1000;
         $("prog-eta").textContent = `向量化约剩 ~${fmtDur(perItem * (total - done))}`;
       }
-    } else if (ev.phase === "writing") {
+    } else if (ev.phase === "writing" || (ev.phase === "embedding" && done >= total)) {
       $("prog-eta").textContent = "";
     }
   } else if (ev.stage === "module1" && total > 0 && done >= 1) {
