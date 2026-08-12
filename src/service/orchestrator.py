@@ -414,13 +414,8 @@ async def run_ingest(
             # RuntimeError 分支），靠 subscribe() 的 0.5s 轮询兜底。实测送达延迟
             # ~250ms，相对入库的数十秒~数分钟量级完全可接受。
             label = _PHASE_MSG.get(phase, phase)
-            # 向量化的 0/N 是"这批刚开始算"，写成 "0/15" 会被读成没动静 ——
-            # 这段是整条链路最慢的，且要等整个 chunk 算完才有下一条事件。
-            if phase == "embedding" and done == 0:
-                msg = f"{label} 0/{total}（正在计算首批…）"
-            else:
-                msg = f"{label} {done}/{total}"
-            emit({"stage": "ingest_traj", "status": "running", "msg": msg,
+            emit({"stage": "ingest_traj", "status": "running",
+                  "msg": f"{label} {done}/{total}",
                   "index": done, "total": total, "phase": phase})
 
         # 切片+签名+embed 是整条链路最重的同步段，直接跑在事件循环上会让 SSE 心跳、

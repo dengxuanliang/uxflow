@@ -2,15 +2,18 @@
 const $ = (id) => document.getElementById(id);
 
 // Per-mode stage sets. `runs` = 单次检分老路径; `search`/`ingest` = 双模式新路径.
-// ingest_traj/ingest_manifest 两个后端事件都映射到单一 "ingest" 节点(见 handleEvent).
+// ingest 的三个后端 phase 各占一个节点(见 handleEvent 的 phase→stage 映射),
+// 让"现在在切片还是在向量化"从步骤条上一眼可见 —— 向量化是最慢的一段,
+// 压在单个"写库"节点里会让整个入库看起来都卡在同一步.
 const STAGE_SETS = {
   runs: ["module0", "module1", "module2", "module3", "done"],
   search: ["search0", "search1", "done"],
-  ingest: ["ingest", "done"],
+  ingest: ["ingest_slice", "ingest_embed", "ingest_write", "done"],
 };
 const STAGE_LABELS = {
   module0: "编译", module1: "召回·精判", module2: "软加分", module3: "优选",
-  done: "完成", search0: "分析", search1: "检索", ingest: "写库",
+  done: "完成", search0: "分析", search1: "检索",
+  ingest_slice: "切片", ingest_embed: "向量化", ingest_write: "写库",
 };
 let STAGES = STAGE_SETS.runs;   // current mode's stages; setStage/resetProgress read this
 
@@ -200,7 +203,7 @@ async function startIngest() {
   resetProgress();
   resetRunState();
   hideDedupBanner();
-  setStage("ingest");
+  setStage("ingest_slice");
   setMsg("上传中…");
   $("stop").style.display = "";
   startTimer();
@@ -484,9 +487,16 @@ async function stopRun() {
 }
 
 function handleEvent(ev) {
-  // ingest 后端发 ingest_traj/ingest_manifest 两种阶段 → 统一映射到 "ingest" 节点
+  // ingest_traj 的三个 phase 各映射到独立步骤节点，让阶段切换在步骤条上可见。
+  // ingest_manifest (清单路径，无 phase) 和无 phase 的旧事件落到第一个节点。
   let stage = ev.stage;
-  if (stage === "ingest_traj" || stage === "ingest_manifest") stage = "ingest";
+  if (stage === "ingest_traj") {
+    const phaseStage = { slicing: "ingest_slice", embedding: "ingest_embed",
+                         writing: "ingest_write" };
+    stage = (ev.phase && phaseStage[ev.phase]) || "ingest_slice";
+  } else if (stage === "ingest_manifest") {
+    stage = "ingest_slice";
+  }
   if (stage && stage !== "done") setStage(stage);
   setMsg(ev.msg || ev.status || ev.stage);
 
@@ -516,7 +526,9 @@ function handleEvent(ev) {
     // 切片 0~15%（纯 CPU，快）、向量化 15~95%（模型前向，最慢）、写库 95~100%。
     const SEG = { slicing: [0, 0.15], embedding: [0.15, 0.95], writing: [0.95, 1] };
     const [lo, hi] = SEG[ev.phase] || [0, 1];
-    $("prog-count").textContent = ev.msg;
+    // prog-count 留空：阶段名已在步骤条上高亮，完整文案已由 setMsg 写进
+    // #progress-msg —— 这里再写一遍 ev.msg 会让同一句话紧挨着出现两次。
+    $("prog-count").textContent = "";
 
     // 向量化的 0/N：这一批刚开始算，进度要等整个 chunk 算完才动。CPU 推理下
     // 单批可达数十秒，此时显示静止的实心条会被读成"卡死" —— 改用 sweep 动画
