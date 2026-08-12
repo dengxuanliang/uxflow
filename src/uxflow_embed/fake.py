@@ -26,6 +26,11 @@ class FakeEmbedder:
     def dimension(self) -> int:
         return self._dimension
 
+    @property
+    def preferred_batch_size(self) -> int:
+        """FakeEmbedder is CPU-bound numpy ops; larger batches amortize loop overhead."""
+        return 128
+
     def embed(self, text: str) -> list[float]:
         # Seed a deterministic RNG from the text hash → stable pseudo-vector.
         digest = hashlib.sha256(text.encode("utf-8")).digest()
