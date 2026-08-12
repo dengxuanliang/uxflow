@@ -114,6 +114,88 @@ def test_trajectory_store_satisfies_protocol(tmp_path):
     assert isinstance(store, TrajectoryStore)
 
 
+# ---------------- TrajectoryStore: raw OpenAI messages ----------------
+
+_RAW = [
+    {"role": "system", "content": "You are an expert engineer."},
+    {"role": "assistant", "content": "Reading the file.",
+     "tool_calls": [{"id": "call_001", "type": "function",
+                     "function": {"name": "Read", "arguments": '{"p": "a.py"}'}}]},
+    {"role": "tool", "tool_call_id": "call_001", "content": "1\tdef f()"},
+]
+
+
+def test_trajectory_raw_json_roundtrip(tmp_path):
+    """原始 OpenAI messages 原封不动存取 —— tool_call_id / tool_calls[].id 都要在。
+
+    这正是 steps 扁平化时丢掉的信息，也是 Raw JSON 视图存在的理由。
+    """
+    import json
+    store = SqliteTrajectoryStore(tmp_path / "t.db")
+    store.upsert("T1", [{"index": 0}], source_path="/p",
+                 raw_json=json.dumps(_RAW, ensure_ascii=False))
+    got = store.get("T1")
+    assert got["raw"] == _RAW
+    assert got["raw"][1]["tool_calls"][0]["id"] == "call_001"
+    assert got["raw"][2]["tool_call_id"] == "call_001"
+
+
+def test_trajectory_raw_json_optional(tmp_path):
+    """不传 raw_json 时 get() 返回 raw=None，不得 KeyError 或崩溃。
+
+    老库入库的轨迹就是这个形态，前端据此置灰 Raw JSON 按钮。
+    """
+    store = SqliteTrajectoryStore(tmp_path / "t.db")
+    store.upsert("T1", [{"index": 0}], source_path="/p")
+    got = store.get("T1")
+    assert got["raw"] is None
+    assert got["steps"] == [{"index": 0}]
+
+
+def test_trajectory_raw_json_survives_reopen(tmp_path):
+    import json
+    db = tmp_path / "t.db"
+    s1 = SqliteTrajectoryStore(db)
+    s1.upsert("T1", [{"index": 0}], source_path="/p", raw_json=json.dumps(_RAW))
+    s1.close()
+    assert SqliteTrajectoryStore(db).get("T1")["raw"] == _RAW
+
+
+def test_trajectory_raw_json_migration_is_idempotent(tmp_path):
+    """幂等 ALTER：重复打开同一个库不得因 duplicate column 报错。"""
+    db = tmp_path / "t.db"
+    for _ in range(3):
+        s = SqliteTrajectoryStore(db)
+        s.close()
+    assert SqliteTrajectoryStore(db).count() == 0
+
+
+def test_trajectory_legacy_db_without_raw_column_upgrades(tmp_path):
+    """模拟旧库（无 raw_json 列）：打开时补列，老行 raw 读作 None。"""
+    import json
+    import sqlite3
+    db = tmp_path / "legacy.db"
+    conn = sqlite3.connect(str(db))
+    conn.executescript("""
+        CREATE TABLE trajectories (
+            trajectory_id TEXT PRIMARY KEY,
+            steps_json TEXT NOT NULL,
+            source_path TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+    """)
+    conn.execute("INSERT INTO trajectories (trajectory_id, steps_json, source_path)"
+                 " VALUES ('OLD', '[{\"index\": 0}]', '/p')")
+    conn.commit()
+    conn.close()
+
+    store = SqliteTrajectoryStore(db)          # 应触发幂等 ALTER 补列
+    assert store.get("OLD")["raw"] is None     # 老行没有原始数据
+    store.upsert("NEW", [{"index": 0}], source_path="/p",
+                 raw_json=json.dumps(_RAW))
+    assert store.get("NEW")["raw"] == _RAW     # 新行可以写入
+
+
 # ---------------- JudgeCache ----------------
 
 def test_judge_put_get_roundtrip(tmp_path):

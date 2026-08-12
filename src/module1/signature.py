@@ -12,7 +12,7 @@ import re
 
 from module1.models import Slice, Step, TrajectorySignature
 
-__all__ = ["extract_signature"]
+__all__ = ["extract_signature", "build_embedding_text"]
 
 _ERROR_PATTERNS = [
     re.compile(r"Traceback \(most recent call last\)", re.IGNORECASE),
@@ -144,6 +144,17 @@ def _extract_bm25_tokens(steps: list[Step], tools_used: list[str]) -> list[str]:
             if ident.lower() not in _STOP_IDENTIFIERS:
                 tokens.add(ident)
     return sorted(tokens)
+
+
+def build_embedding_text(slice_obj: Slice) -> str:
+    """extract_signature 会为该切片嵌入的**同一段**文本。
+
+    批量调用方（ingest 写路径）用它先把整批文本备齐，一次 embed_batch 后回填
+    sig.embedding —— 模型调用数从每切片一次降到每批一次，向量逐字节相同。
+    与 extract_signature 共用 _build_summary_for_embedding，单一来源保证两条
+    路径不会漂移。
+    """
+    return _build_summary_for_embedding(slice_obj.steps)
 
 
 def _build_summary_for_embedding(steps: list[Step]) -> str:

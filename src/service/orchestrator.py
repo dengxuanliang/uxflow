@@ -8,6 +8,8 @@ Emits progress events keyed by pipeline stage.
 
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
 import pathlib
 from dataclasses import asdict, dataclass
@@ -104,6 +106,32 @@ def _compress_failure_trajectory(
     if len(text) > _MAX_EVIDENCE_CHARS:
         text = text[:_MAX_EVIDENCE_CHARS] + "\n...(截断)"
     return text
+
+
+async def _offload(fn, *args, **kwargs):
+    """把同步阻塞段挪出事件循环，且取消时不留孤儿线程。
+
+    为什么不裸 `await asyncio.to_thread(...)`：run_ingest 由 app 层的 _run_lock
+    串行化，用的是同一个 deps.pipeline 实例，写的是同一套 store。裸 to_thread 在
+    取消时会让协程立刻解锁返回，而工作线程仍在改 pipeline._store / 写库 —— 用户
+    紧接着发起的下一次入库就会与这个孤儿线程并发写，索引被写坏。app.py 的 finally
+    还会 unlink 上传的临时文件，孤儿线程可能正在读它。
+
+    线程无法从外部中断，所以取消时只能 shield 住等它自己跑完再把 CancelledError
+    传上去：调用方失去的只是"立刻返回"，换来的是锁释放时后台确实已经收工。
+    与 module1/pipeline.py:150 的 _build_index 卸载同款处理。
+    """
+    task = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # 重复取消也不能放弃这个 task —— 循环 shield 直到线程真正结束。
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                continue
+        raise
 
 
 @dataclass
@@ -348,16 +376,63 @@ async def run_ingest(
     from service.viewmodel import _step_to_dict
 
     added = skipped = failed = 0
+    # None = 本次没传轨迹文件；0 = 传了但一条都没解析出来（两者必须可区分）
+    traj_ingested: int | None = None
 
     if trajectory_path is not None:
-        emit({"stage": "ingest_traj", "status": "running", "msg": "切片+签名+写库..."})
+        traj_ingested = 0
+        emit({"stage": "ingest_traj", "status": "running", "msg": "准备入库..."})
 
         def on_traj(traj, src):
-            if deps.trajectory_store is not None:
+            # 在工作线程里被回调：_offload 只起一个线程跑整段，on_traj 不存在并发
+            # 调用，nonlocal 累加无竞态。store 侧跨线程安全见 stores.py:95-99
+            # （check_same_thread=False + WAL + autocommit）。
+            nonlocal traj_ingested
+            traj_ingested += 1
+            if deps.trajectory_store is None:
+                return
+            steps = [_step_to_dict(s) for s in traj.steps]
+            # 原封不动的 OpenAI messages 一并落库，供前端 Raw JSON 视图 ——
+            # steps 扁平化丢掉了 tool_call_id / tool_calls[].id，只能从这里找回。
+            # getattr 兜底鸭子类型的轨迹对象（测试 fake、下游自定义实现）。
+            raw_messages = getattr(traj, "raw_messages", None)
+            raw_json = (json.dumps(raw_messages, ensure_ascii=False)
+                        if raw_messages else None)
+            try:
                 deps.trajectory_store.upsert(
-                    traj.id, [_step_to_dict(s) for s in traj.steps], source_path=src)
+                    traj.id, steps, source_path=src, raw_json=raw_json)
+            except TypeError:
+                # 老 TrajectoryStore 的 upsert 不接受 raw_json —— 降级为不存 raw，
+                # 而不是让整个入库失败。Raw JSON 是增强，不该成为必需契约。
+                deps.trajectory_store.upsert(traj.id, steps, source_path=src)
 
-        deps.pipeline.ingest_trajectories([trajectory_path], on_trajectory=on_traj)
+        _PHASE_MSG = {"slicing": "切片", "embedding": "向量化", "writing": "写入索引"}
+
+        def on_prog(phase, done, total):
+            # 在工作线程里被回调：append_event 本身线程安全（list.append + dict
+            # 查都受 GIL 提供保护），只是 notify 机制走不到（runstore.py:82 的
+            # RuntimeError 分支），靠 subscribe() 的 0.5s 轮询兜底。实测送达延迟
+            # ~250ms，相对入库的数十秒~数分钟量级完全可接受。
+            label = _PHASE_MSG.get(phase, phase)
+            emit({"stage": "ingest_traj", "status": "running",
+                  "msg": f"{label} {done}/{total}",
+                  "index": done, "total": total, "phase": phase})
+
+        # 切片+签名+embed 是整条链路最重的同步段，直接跑在事件循环上会让 SSE 心跳、
+        # 计时器、/stats 和「停止」按钮全部失联（实测入库期间心跳 0 次）。
+        #
+        # on_progress 是后加的可选能力：注入式 pipeline（测试 fake、下游自定义
+        # 实现）可能仍是老签名，无脑传会 TypeError 炸掉整个入库。探测形参后再决定
+        # 传不传 —— 进度显示是增强，不该成为新的必需契约。
+        kwargs = {"on_trajectory": on_traj}
+        try:
+            params = inspect.signature(deps.pipeline.ingest_trajectories).parameters
+        except (TypeError, ValueError):     # 内建/C 实现取不到签名
+            params = {}
+        if "on_progress" in params:
+            kwargs["on_progress"] = on_prog
+        await _offload(
+            deps.pipeline.ingest_trajectories, [trajectory_path], **kwargs)
 
     if manifest_lines:
         for i, raw in enumerate(manifest_lines):
@@ -368,7 +443,7 @@ async def run_ingest(
                 # PR-2: 结构化行取 question；failure_trajectory 非 None 时压缩喂 Call 2。
                 # 纯文本行 failure_trajectory 恒 None，dedup/compile/入库口径逐字不变。
                 question, failure_trajectory = _parse_manifest_line(line)
-                emb = deps.embedder.embed(question)
+                emb = await _offload(deps.embedder.embed, question)
                 hit = deps.problem_store.nearest(emb)
                 if hit is not None and hit[1] >= tau_q:
                     skipped += 1
@@ -392,8 +467,10 @@ async def run_ingest(
                 emit({"stage": "ingest_manifest", "status": "running",
                       "msg": f"第{i + 1}行失败: {exc}"})
 
+    traj_msg = "" if traj_ingested is None else f"处理轨迹 {traj_ingested} 条, "
     emit({"stage": "done", "status": "ok",
-          "msg": f"入库 {added} 问题, 跳过 {skipped}, 失败 {failed}"})
+          "msg": f"{traj_msg}入库 {added} 问题, 跳过 {skipped}, 失败 {failed}"})
     view = {"mode": "ingest",
-            "summary": {"added": added, "skipped_dup": skipped, "failed": failed}}
+            "summary": {"added": added, "skipped_dup": skipped, "failed": failed,
+                        "traj_ingested": traj_ingested}}
     return view, {}

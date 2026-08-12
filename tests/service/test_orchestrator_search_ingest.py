@@ -276,7 +276,28 @@ async def test_run_ingest_trajectory_only(tmp_path):
     assert pipeline.ingest_calls == [["traj.jsonl"]]
     assert len(tstore.upsert_calls) == 1
     assert tstore.upsert_calls[0][0] == "t1"
-    assert view["summary"]["added"] == 0
+    assert view["summary"]["added"] == 0        # 无清单 → 问题计数为 0
+    assert view["summary"]["traj_ingested"] == 1
+
+
+# ── 4b. run_ingest 传了轨迹但一条都没解析出来 ────────────────────────
+async def test_run_ingest_empty_trajectory_file_counts_zero_not_none(tmp_path):
+    """空/全非法的轨迹文件 → traj_ingested 是 0，不是 None。
+
+    前端按 `!= null` 门控该段：0 要显示"处理轨迹 0 条"（传了但没解析出东西，
+    是用户需要看到的信号），None 才整段隐藏（压根没传轨迹）。
+    """
+    pipeline = FakePipeline(trajectories=[])       # 文件里没有可解析的轨迹
+    tstore = FakeTrajectoryStore()
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=pipeline, select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=tstore,
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    view, _ = await run_ingest(trajectory_path="empty.jsonl", deps=deps,
+                               emit=lambda e: None)
+    assert tstore.upsert_calls == []
+    assert view["summary"]["traj_ingested"] == 0
 
 
 # ── 5. run_ingest 仅清单 ─────────────────────────────────────────────
@@ -293,6 +314,7 @@ async def test_run_ingest_manifest_only(tmp_path):
     assert view["summary"]["added"] == 2
     assert view["summary"]["skipped_dup"] == 0
     assert view["summary"]["failed"] == 0
+    assert view["summary"]["traj_ingested"] is None   # 没传轨迹 ≠ 传了但 0 条
 
 
 # ── 6. run_ingest 去重跳过 ───────────────────────────────────────────
@@ -345,6 +367,7 @@ async def test_run_ingest_both_trajectory_and_manifest(tmp_path):
     assert len(tstore.upsert_calls) == 1
     assert len(store.add_calls) == 1
     assert view["summary"]["added"] == 1
+    assert view["summary"]["traj_ingested"] == 1
 
 
 # ── 9. PipelineDeps 向后兼容（四个位置参数）─────────────────────────
@@ -413,3 +436,217 @@ async def test_run_ingest_plain_text_line_passes_none_evidence(tmp_path):
     )
     await run_ingest(manifest_lines=["纯文本问题"], deps=deps, emit=lambda e: None)
     assert compiler.evidence_seen == [None]
+
+
+# ── 12. P1: 同步入库段不得饿死事件循环 ────────────────────────────────
+class BlockingPipeline:
+    """ingest_trajectories 阻塞 BLOCK_S 秒（模拟真实的切片+签名+embed 同步段）。"""
+
+    BLOCK_S = 0.30
+
+    def __init__(self):
+        self.ingest_calls = []
+        self.thread_name = None
+
+    def ingest_trajectories(self, paths, *, on_trajectory=None):
+        import threading
+        import time
+        self.ingest_calls.append(list(paths))
+        self.thread_name = threading.current_thread().name
+        time.sleep(self.BLOCK_S)      # 真阻塞，不是 await
+
+
+async def test_ingest_does_not_starve_event_loop():
+    """入库期间事件循环必须仍在调度其他协程。
+
+    这是「停止」按钮/SSE 心跳/计时器能不能动的地基：同步段直接跑在 loop 上时
+    心跳一次都发不出（实测 0 次），挪进线程后恢复（实测 ~18 次）。
+    """
+    import asyncio
+
+    pipeline = BlockingPipeline()
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=pipeline, select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=FakeTrajectoryStore(),
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+
+    ticks = 0
+    stop = asyncio.Event()
+
+    async def heartbeat():
+        nonlocal ticks
+        while not stop.is_set():
+            await asyncio.sleep(0.01)
+            ticks += 1
+
+    hb = asyncio.create_task(heartbeat())
+    await run_ingest(trajectory_path="traj.jsonl", deps=deps, emit=lambda e: None)
+    stop.set()
+    await hb
+
+    assert pipeline.ingest_calls == [["traj.jsonl"]]
+    # 同步跑在 loop 上 → ticks == 0；挪进工作线程 → 应有可观的心跳数。
+    assert ticks > 5, f"事件循环被饿死，入库 {BlockingPipeline.BLOCK_S}s 期间只调度了 {ticks} 次"
+
+
+async def test_ingest_runs_off_the_event_loop_thread():
+    """同步段必须在工作线程执行，而不是事件循环所在线程。"""
+    import threading
+
+    loop_thread = threading.current_thread().name
+    pipeline = BlockingPipeline()
+    pipeline.BLOCK_S = 0.0        # 本例只关心线程身份，无需真阻塞
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=pipeline, select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=FakeTrajectoryStore(),
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    await run_ingest(trajectory_path="traj.jsonl", deps=deps, emit=lambda e: None)
+    assert pipeline.thread_name is not None
+    assert pipeline.thread_name != loop_thread
+
+
+# ── 13. 入库进度事件：前端据此渲染 determinate 进度条 ─────────────────
+class ProgressPipeline:
+    """按真实 pipeline 的契约回调 on_progress 三阶段。"""
+
+    def __init__(self):
+        self.ingest_calls = []
+
+    def ingest_trajectories(self, paths, *, on_trajectory=None, on_progress=None):
+        self.ingest_calls.append(list(paths))
+        if on_progress is None:
+            return
+        for i in (1, 2, 3):
+            on_progress("slicing", i, 3)
+        on_progress("embedding", 5, 5)
+        on_progress("writing", 0, 5)
+        on_progress("writing", 5, 5)
+
+
+async def test_ingest_emits_progress_with_index_and_total():
+    """进度事件必须带 index/total —— 前端靠这两个字段走 determinate 分支，
+    缺了就退回无限扫动（用户看不到卡在哪、不知该不该停）。"""
+    pipeline = ProgressPipeline()
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=pipeline, select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=FakeTrajectoryStore(),
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    events = []
+    await run_ingest(trajectory_path="traj.jsonl", deps=deps,
+                     emit=lambda e: events.append(e))
+
+    prog = [e for e in events if e.get("phase") is not None]
+    assert prog, "一条进度事件都没发"
+    for e in prog:
+        assert e["stage"] == "ingest_traj"
+        assert isinstance(e["index"], int) and isinstance(e["total"], int)
+        assert 0 <= e["index"] <= e["total"]
+        assert e["msg"]                      # 文案非空，用户要看到阶段名
+
+    assert {e["phase"] for e in prog} == {"slicing", "embedding", "writing"}
+    # 中文阶段名要落到 msg 里
+    assert any("切片" in e["msg"] for e in prog)
+    assert any("向量化" in e["msg"] for e in prog)
+    assert any("写入索引" in e["msg"] for e in prog)
+
+
+async def test_ingest_without_progress_support_still_works():
+    """老 pipeline（不接受 on_progress）不得因此报错。"""
+    pipeline = BlockingPipeline()
+    pipeline.BLOCK_S = 0.0
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=pipeline, select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=FakeTrajectoryStore(),
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    view, _ = await run_ingest(trajectory_path="traj.jsonl", deps=deps,
+                               emit=lambda e: None)
+    assert view["summary"]["traj_ingested"] == 0
+
+
+# ── 14. Raw JSON: 原始 OpenAI messages 随 ingest 落库 ──────────────────
+class RawCapturingStore:
+    """记录 upsert 收到的 raw_json（新签名）。"""
+
+    def __init__(self):
+        self.calls = []
+
+    def upsert(self, traj_id, steps, *, source_path, raw_json=None):
+        self.calls.append({"id": traj_id, "steps": steps,
+                           "source_path": source_path, "raw_json": raw_json})
+
+
+class RawTrajectory:
+    """带 raw_messages 的轨迹（真 Trajectory 有此字段，见 module1/models.py）。"""
+
+    def __init__(self, tid, steps, raw_messages):
+        self.id = tid
+        self.steps = steps
+        self.raw_messages = raw_messages
+
+
+class RawPipeline:
+    def __init__(self, trajectories):
+        self._trajectories = trajectories
+        self.ingest_calls = []
+
+    def ingest_trajectories(self, paths, *, on_trajectory=None, on_progress=None):
+        self.ingest_calls.append(list(paths))
+        for path in paths:
+            for traj in self._trajectories:
+                if on_trajectory is not None:
+                    on_trajectory(traj, str(path))
+
+
+async def test_ingest_persists_raw_openai_messages():
+    """入库时把原封不动的 messages 一并写入 —— steps 扁平化丢掉的
+    tool_call_id / tool_calls[].id 只能从这里找回。"""
+    import json
+
+    raw = [
+        {"role": "user", "content": "修 bug"},
+        {"role": "assistant", "content": "读文件",
+         "tool_calls": [{"id": "call_1", "type": "function",
+                         "function": {"name": "Read", "arguments": '{"p":"a.py"}'}}]},
+        {"role": "tool", "tool_call_id": "call_1", "content": "内容"},
+    ]
+    traj = RawTrajectory("t1", [FakeStep(0, "user", "修 bug")], raw)
+    store = RawCapturingStore()
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=RawPipeline([traj]), select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=store,
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    await run_ingest(trajectory_path="traj.jsonl", deps=deps, emit=lambda e: None)
+
+    assert len(store.calls) == 1
+    assert json.loads(store.calls[0]["raw_json"]) == raw
+
+
+async def test_ingest_tolerates_trajectory_without_raw_messages():
+    """鸭子类型的轨迹对象没有 raw_messages 时不得炸 —— raw_json 传 None 即可。"""
+    traj = FakeTrajectory("t1", [FakeStep(0, "user", "hi")])   # 无 raw_messages
+    store = RawCapturingStore()
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=RawPipeline([traj]), select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=store,
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    await run_ingest(trajectory_path="traj.jsonl", deps=deps, emit=lambda e: None)
+    assert store.calls[0]["raw_json"] is None
+
+
+async def test_ingest_works_with_legacy_store_without_raw_json_param():
+    """老 TrajectoryStore（upsert 不接受 raw_json）不得因此报错。"""
+    traj = RawTrajectory("t1", [FakeStep(0, "user", "hi")], [{"role": "user"}])
+    legacy = FakeTrajectoryStore()          # upsert 是老签名，无 raw_json
+    deps = PipelineDeps(
+        compiler=FakeCompiler(), pipeline=RawPipeline([traj]), select_fn=fake_select,
+        load_trajectories_fn=lambda p: [], trajectory_store=legacy,
+        problem_store=FakeProblemStore(), embedder=FakeEmbedder(),
+    )
+    await run_ingest(trajectory_path="traj.jsonl", deps=deps, emit=lambda e: None)
+    assert len(legacy.upsert_calls) == 1

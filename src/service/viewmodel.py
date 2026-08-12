@@ -137,6 +137,10 @@ def build_trajectory_index(trajectories: list[Any]) -> dict[str, dict]:
         t.id: {
             "trajectory_id": t.id,
             "steps": [_step_to_dict(s) for s in t.steps],
+            # 原封不动的 OpenAI messages，供前端 Raw JSON 视图。steps 是扁平化
+            # 产物，丢了 tool_call_id 等关联信息。getattr 兜底：鸭子类型的调用方
+            # （测试 fake、下游自定义轨迹对象）未必有这个属性。
+            "raw": getattr(t, "raw_messages", None) or None,
         }
         for t in trajectories
     }

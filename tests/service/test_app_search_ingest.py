@@ -208,3 +208,22 @@ def test_ingest_temp_jsonl_cleaned_up():
         client.get(f"/runs/{rid}/view")
     assert store.status(rid) == "done"
     assert not seen["path"].exists()
+
+
+def test_trajectory_endpoint_exposes_raw_messages():
+    """/runs/{id}/trajectory/{tid} 带出 raw —— 前端 Raw JSON 视图的数据来源。
+
+    前端已在 ensureTrajectory 缓存这个响应，加字段即可，无需新端点。
+    """
+    raw = [{"role": "user", "content": "hi"},
+           {"role": "assistant", "content": "yo",
+            "tool_calls": [{"id": "c1", "type": "function",
+                            "function": {"name": "Read", "arguments": "{}"}}]}]
+    steps = [{"index": 0, "role": "user", "content": "hi"}]
+    deps = _FakeDeps(traj={"t1": {"trajectory_id": "t1", "steps": steps, "raw": raw}})
+    client, _ = _client(deps=deps)
+    rid = client.post("/search", json={"question": "q"}).json()["run_id"]
+    _poll_view(client, rid)
+    body = client.get(f"/runs/{rid}/trajectory/t1").json()
+    assert body["raw"] == raw
+    assert body["raw"][1]["tool_calls"][0]["id"] == "c1"

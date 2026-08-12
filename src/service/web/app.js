@@ -2,15 +2,18 @@
 const $ = (id) => document.getElementById(id);
 
 // Per-mode stage sets. `runs` = 单次检分老路径; `search`/`ingest` = 双模式新路径.
-// ingest_traj/ingest_manifest 两个后端事件都映射到单一 "ingest" 节点(见 handleEvent).
+// ingest 的三个后端 phase 各占一个节点(见 handleEvent 的 phase→stage 映射),
+// 让"现在在切片还是在向量化"从步骤条上一眼可见 —— 向量化是最慢的一段,
+// 压在单个"写库"节点里会让整个入库看起来都卡在同一步.
 const STAGE_SETS = {
   runs: ["module0", "module1", "module2", "module3", "done"],
   search: ["search0", "search1", "done"],
-  ingest: ["ingest", "done"],
+  ingest: ["ingest_slice", "ingest_embed", "ingest_write", "done"],
 };
 const STAGE_LABELS = {
   module0: "编译", module1: "召回·精判", module2: "软加分", module3: "优选",
-  done: "完成", search0: "分析", search1: "检索", ingest: "写库",
+  done: "完成", search0: "分析", search1: "检索",
+  ingest_slice: "切片", ingest_embed: "向量化", ingest_write: "写库",
 };
 let STAGES = STAGE_SETS.runs;   // current mode's stages; setStage/resetProgress read this
 
@@ -41,6 +44,7 @@ let state = {
   activeTraj: null,      // {trajectory_id, slice_index}
   activeHighlight: -1,   // index into current .hit-span elements
   trajCache: {},
+  rawMode: false,            // 第三栏：渲染视图 / 原始 OpenAI messages JSON
   // progress
   es: null,                  // active EventSource, so we can stop it
   startedAt: null,
@@ -48,17 +52,30 @@ let state = {
   compileFirstDoneAt: null,  // wall time when first complaint finished compiling
   compileFirstDoneN: null,   // `done` count observed when the anchor was set
   compileTotal: 0,
+  embedFirstAt: null,        // wall time at the first embedding chunk (ETA anchor)
+  embedFirstN: null,         // slice count observed when that anchor was set
   stopping: false,
   runGen: 0,                 // per-run generation token; isolates stop/rerun races
   currentDbName: null,       // basename of the current DB, for the stats line
 };
 
-$("run").addEventListener("click", startRun);
-$("stop").addEventListener("click", stopRun);
-$("next-highlight").addEventListener("click", jumpToNextHighlight);
-$("btn-search").addEventListener("click", startSearch);
-$("btn-ingest").addEventListener("click", startIngest);
-$("question").addEventListener("keydown", (e) => {
+// 绑定前判空：index.html 与 app.js 通过 ?v=N 各自缓存，两者版本错配时（改了
+// app.js 忘了升 v，或浏览器只更新了其中一个）某个元素可能不存在。裸 addEventListener
+// 会在此抛 TypeError，中断后面**所有**绑定和初始化 —— 表现为整个页面失灵，
+// 而不只是少一个按钮。宁可少绑一个监听，也不能让整个前端挂掉。
+function on(id, event, handler) {
+  const el = $(id);
+  if (el) el.addEventListener(event, handler);
+  else console.warn(`[uxflow] 缺少元素 #${id} —— index.html 与 app.js 版本可能不一致，试试硬刷新`);
+}
+
+on("run", "click", startRun);
+on("stop", "click", stopRun);
+on("next-highlight", "click", jumpToNextHighlight);
+on("toggle-raw", "click", toggleRawView);
+on("btn-search", "click", startSearch);
+on("btn-ingest", "click", startIngest);
+on("question", "keydown", (e) => {
   if (e.key === "Enter") { e.preventDefault(); startSearch(); }
 });
 
@@ -196,7 +213,7 @@ async function startIngest() {
   resetProgress();
   resetRunState();
   hideDedupBanner();
-  setStage("ingest");
+  setStage("ingest_slice");
   setMsg("上传中…");
   $("stop").style.display = "";
   startTimer();
@@ -377,6 +394,7 @@ function resetRunState() {
   state.activeTraj = null;
   state.activeHighlight = -1;
   state.trajCache = {};
+  state.rawMode = false;     // 新 run 回到渲染视图（缓存已清，raw 也无从谈起）
   updateHighlightTools();
 }
 
@@ -384,6 +402,8 @@ function resetProgress() {
   state.compileFirstDoneAt = null;
   state.compileFirstDoneN = null;
   state.compileTotal = 0;
+  state.embedFirstAt = null;
+  state.embedFirstN = null;
   $("prog-count").textContent = "";
   $("prog-eta").textContent = "";
   $("prog-elapsed").textContent = "⏱ 0:00";
@@ -477,9 +497,16 @@ async function stopRun() {
 }
 
 function handleEvent(ev) {
-  // ingest 后端发 ingest_traj/ingest_manifest 两种阶段 → 统一映射到 "ingest" 节点
+  // ingest_traj 的三个 phase 各映射到独立步骤节点，让阶段切换在步骤条上可见。
+  // ingest_manifest (清单路径，无 phase) 和无 phase 的旧事件落到第一个节点。
   let stage = ev.stage;
-  if (stage === "ingest_traj" || stage === "ingest_manifest") stage = "ingest";
+  if (stage === "ingest_traj") {
+    const phaseStage = { slicing: "ingest_slice", embedding: "ingest_embed",
+                         writing: "ingest_write" };
+    stage = (ev.phase && phaseStage[ev.phase]) || "ingest_slice";
+  } else if (stage === "ingest_manifest") {
+    stage = "ingest_slice";
+  }
   if (stage && stage !== "done") setStage(stage);
   setMsg(ev.msg || ev.status || ev.stage);
 
@@ -503,6 +530,40 @@ function handleEvent(ev) {
       $("prog-eta").textContent = `编译约剩 ~${fmtDur(remain)}`;
     }
     if (done >= total) $("prog-eta").textContent = "";
+  } else if (ev.stage === "ingest_traj" && total > 0 && ev.phase) {
+    // 入库三阶段各有自己的 total（轨迹数 vs 切片数），直接 done/total 会让进度条
+    // 在阶段切换时从满退回空。按耗时占比分段映射到全局 0..1，保证单调不倒退：
+    // 切片 0~15%（纯 CPU，快）、向量化 15~95%（模型前向，最慢）、写库 95~100%。
+    const SEG = { slicing: [0, 0.15], embedding: [0.15, 0.95], writing: [0.95, 1] };
+    const [lo, hi] = SEG[ev.phase] || [0, 1];
+    // prog-count 留空：阶段名已在步骤条上高亮，完整文案已由 setMsg 写进
+    // #progress-msg —— 这里再写一遍 ev.msg 会让同一句话紧挨着出现两次。
+    $("prog-count").textContent = "";
+
+    // 向量化的 0/N：这一批刚开始算，进度要等整个 chunk 算完才动。CPU 推理下
+    // 单批可达数十秒，此时显示静止的实心条会被读成"卡死" —— 改用 sweep 动画
+    // 表达"在跑但估不出进度"，等第一个 chunk 回来再切回确定式进度。
+    if (ev.phase === "embedding" && done === 0) {
+      setBarSweep();
+      $("prog-eta").textContent = "首批向量化中，用时取决于切片数与硬件…";
+    } else {
+      setBarFraction(lo + (hi - lo) * (done / total));
+    }
+
+    // ETA 只在向量化阶段外推：它占绝大部分时间，且按 chunk 均匀推进，是唯一
+    // 能诚实估算的一段。done === total 时不设锚点（单 chunk 直接满，估不出）。
+    if (ev.phase === "embedding" && done >= 1 && done < total) {
+      if (state.embedFirstAt === null) {
+        state.embedFirstAt = Date.now();
+        state.embedFirstN = done;
+        $("prog-eta").textContent = "";
+      } else if (done > state.embedFirstN) {
+        const perItem = (Date.now() - state.embedFirstAt) / (done - state.embedFirstN) / 1000;
+        $("prog-eta").textContent = `向量化约剩 ~${fmtDur(perItem * (total - done))}`;
+      }
+    } else if (ev.phase === "writing" || (ev.phase === "embedding" && done >= total)) {
+      $("prog-eta").textContent = "";
+    }
   } else if (ev.stage === "module1" && total > 0 && done >= 1) {
     // Judge phase: determinate "精判 i/N" bar (no ETA — per-sub_problem judge
     // cost varies too much to extrapolate honestly).
@@ -530,7 +591,11 @@ async function loadView(runId, myGen) {
     const s = state.view.summary || {};
     $("workspace").classList.add("hidden");
     hideDedupBanner();
-    setMsg(`入库完成：新增 ${s.added ?? 0} · 跳过重复 ${s.skipped_dup ?? 0} · 失败 ${s.failed ?? 0}`);
+    // traj_ingested 为 null/缺失 = 本次没传轨迹（含老 runs 的 view）→ 不显示该段
+    const parts = [];
+    if (s.traj_ingested != null) parts.push(`处理轨迹 ${s.traj_ingested} 条`);
+    parts.push(`新增 ${s.added ?? 0} 问题`, `跳过重复 ${s.skipped_dup ?? 0}`, `失败 ${s.failed ?? 0}`);
+    setMsg(`入库完成：${parts.join(" · ")}`);
     loadStats();
     return;
   }
@@ -737,6 +802,20 @@ function renderDetail() {
     updateHighlightTools();
     return;
   }
+
+  // Raw JSON 视图：原封不动的 OpenAI messages（含 tool_call_id 等 steps 丢掉的
+  // 字段），整条轨迹而非当前切片。
+  // 切到一条没有 raw 的轨迹时自动退回渲染视图 —— 否则按钮已 disabled，用户点不回来。
+  if (state.rawMode && !traj.raw) state.rawMode = false;
+  if (state.rawMode) {
+    const pre = document.createElement("pre");
+    pre.className = "raw-json";
+    pre.textContent = JSON.stringify(traj.raw, null, 2);   // textContent 即转义
+    el.appendChild(pre);
+    updateHighlightTools();
+    return;
+  }
+
   const hit = currentHits().find(
     (h) => h.trajectory_id === state.activeTraj.trajectory_id
       && h.slice_index === state.activeTraj.slice_index);
@@ -801,12 +880,22 @@ function updateHighlightTools() {
   const tools = $("detail-tools");
   const btn = $("next-highlight");
   const count = $("highlight-count");
+  updateRawToggle();
   if (!tools || !btn || !count) return;
 
   const spans = currentFocusedSpans();   // jump units are spans, not steps
   const total = spans.length;
   tools.classList.toggle("hidden", !state.activeTraj);
   btn.disabled = total === 0;
+
+  // Raw JSON 视图里没有 step 元素可跳，高亮导航无意义 —— 整组隐藏。
+  const raw = state.rawMode;
+  btn.classList.toggle("hidden", raw);
+  count.classList.toggle("hidden", raw);
+  if (raw) {
+    markCurrentSpan(null);
+    return;
+  }
 
   if (total === 0) {
     state.activeHighlight = -1;
@@ -819,6 +908,33 @@ function updateHighlightTools() {
   count.textContent = `高亮 ${current}/${total}`;
 
   markCurrentSpan(state.activeHighlight >= 0 ? spans[state.activeHighlight] : null);
+}
+
+// 当前选中轨迹的原始 OpenAI messages（无则 null）。
+function currentRawMessages() {
+  if (!state.activeTraj) return null;
+  const traj = state.trajCache[cacheKey(state.activeTraj.trajectory_id)];
+  return traj ? (traj.raw || null) : null;
+}
+
+function updateRawToggle() {
+  const btn = $("toggle-raw");
+  if (!btn) return;
+  const hasRaw = currentRawMessages() !== null;
+  // 切到一条没有 raw 的轨迹时，若还停在 raw 模式，按钮会因 disabled 而无法点回
+  // 渲染视图 —— 用户被卡住。此处强制退回渲染视图。
+  if (!hasRaw && state.rawMode) state.rawMode = false;
+  // 无原始数据（老库入库的轨迹）→ 置灰并说明原因，而不是让按钮点了没反应。
+  btn.disabled = !hasRaw;
+  btn.title = hasRaw ? "" : "该轨迹入库时未保存原始消息";
+  btn.textContent = state.rawMode ? "渲染视图" : "Raw JSON";
+  btn.classList.toggle("active", state.rawMode);
+}
+
+function toggleRawView() {
+  if (currentRawMessages() === null) return;
+  state.rawMode = !state.rawMode;
+  renderDetail();
 }
 
 function jumpToNextHighlight() {

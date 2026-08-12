@@ -16,13 +16,20 @@ from typing import Callable
 from module1.models import SFTCandidate, JudgeResult
 from module1.loader import load_trajectories
 from module1.slicer import slice_trajectory
-from module1.signature import extract_signature
+from module1.signature import build_embedding_text, extract_signature
 from module1.index import MemoryIndex
 from module1.judge import Judge
 from module2.models import ScoredCandidate
 from module2.rerank import rerank
 
 __all__ = ["TrajectoryPipeline", "PipelineConfig"]
+
+# 一次 embed_batch 最多喂多少条。ApiEmbedder 把整批塞进单个 HTTP 请求
+# （api.py:65），不分块会撞 provider 的 input 条数/token 上限。
+# 取 32 而非更大：LocalEmbedder 内部本就按 batch_size=32 二次切分（local.py:67），
+# 所以对它而言 32 和 64 的计算量完全一样，但外层分块更细 → 进度更新更频繁。
+# 向量化是最慢的一段，chunk 边界是唯一的进度更新点。
+_EMBED_CHUNK = 32
 
 
 def _dict_to_judge_result(d: dict) -> "JudgeResult":
@@ -197,20 +204,84 @@ class TrajectoryPipeline:
                     self._store.add(sig)
                     self._store.set_slice_source(sl.trajectory_id, sl.slice_index, sl)
 
-    def ingest_trajectories(self, trajectory_paths, *, on_trajectory=None):
+    def ingest_trajectories(self, trajectory_paths, *, on_trajectory=None,
+                            on_progress=None):
         """写路径: 增量 build index 到当前 self._store（持久 store 由 store_factory 注入），
-        不 reset。on_trajectory(traj, source_path) 可选回调，用于把全文交给 TrajectoryStore。"""
+        不 reset。on_trajectory(traj, source_path) 可选回调，用于把全文交给 TrajectoryStore。
+
+        embedding 走批量：先把全部切片的签名算出来（纯 CPU，不含向量），再按
+        _EMBED_CHUNK 分块 embed_batch 回填。模型调用数 N → ceil(N/64)，这是本路径
+        最贵的一环（每次入库都付，非一次性成本）。
+
+        on_progress(phase, done, total) 可选回调，phase ∈ {"slicing","embedding","writing"}。
+        embedding 阶段每完成一个 chunk 报一次 —— 批量化把 N 次小调用压成
+        ceil(N/64) 次大调用，总时间更短，但单步不可观测，必须显式报进度。
+        """
+        emb_model = self._config.embedding_model
+        pending: list[tuple[object, object]] = []      # (signature, slice)
+        texts: list[str] = []
+
+        def _report(phase, done, total):
+            # 进度上报绝不能中止入库：回调那头是 SSE/前端，断连或序列化失败都可能
+            # 抛，而此时 add_batch 还没执行 —— 让它冒泡等于整批白干（实测 20 条
+            # 轨迹一条都进不去）。同 run_scored 对 on_progress 的处理。
+            if on_progress is None:
+                return
+            try:
+                on_progress(phase, done, total)
+            except Exception:  # noqa: BLE001 — 进度是增强，不该有能力中止写入
+                pass
+
+        # 预加载所有文件，数出轨迹总数 —— 避免多文件时 per-path 进度重置
+        # （例：a.jsonl 3 条、b.jsonl 2 条 → 若按文件各自 enumerate，前端
+        # 会收到 1/3 2/3 3/3 跳回 1/2 2/2，进度条冲满再退回）。
+        all_trajectories = []
         for path in trajectory_paths:
             path = pathlib.Path(path)
-            trajectories = load_trajectories(path)
-            for traj in trajectories:
-                self._traj_paths[traj.id] = str(path)
-                if on_trajectory is not None:
-                    on_trajectory(traj, str(path))
-                for sl in slice_trajectory(traj):
-                    sig = extract_signature(sl, embedding_model=self._config.embedding_model)
-                    self._store.add(sig)
-                    self._store.set_slice_source(sl.trajectory_id, sl.slice_index, sl)
+            trajs = load_trajectories(path)
+            all_trajectories.extend((traj, str(path)) for traj in trajs)
+
+        n_done = 0
+        for traj, src_path in all_trajectories:
+            self._traj_paths[traj.id] = src_path
+            if on_trajectory is not None:
+                on_trajectory(traj, src_path)
+            for sl in slice_trajectory(traj):
+                # embedding_model=None → 只算结构化字段；向量在下面统一回填。
+                sig = extract_signature(sl, embedding_model=None)
+                pending.append((sig, sl))
+                texts.append(build_embedding_text(sl))
+            n_done += 1
+            _report("slicing", n_done, len(all_trajectories))
+
+        if emb_model is not None and texts:
+            # 先报一条 0/N：向量化是整条链路最慢的一段，而进度只在 chunk 边界更新。
+            # 切片数 <= _EMBED_CHUNK 时只有一个 chunk，不先发这条，界面会一直停在
+            # "切片 N/N" 直到整批算完 —— 用户看到的是"卡在切片"，实际在跑向量化。
+            _report("embedding", 0, len(texts))
+            for start in range(0, len(texts), _EMBED_CHUNK):
+                chunk = texts[start:start + _EMBED_CHUNK]
+                vectors = emb_model.embed_batch(chunk)
+                # 数量必须严格相等：zip 遇到短列表会**静默截断**，尾部切片就带着
+                # 空向量入库 —— 不报错，只是在向量召回里永远命不中。宁可炸掉本次
+                # 入库，也不要悄悄写坏索引。
+                if len(vectors) != len(chunk):
+                    raise ValueError(
+                        f"embed_batch 返回 {len(vectors)} 条，与输入 {len(chunk)} 条不符"
+                        f"（chunk 起始位置 {start}）")
+                # 位置映射：embed_batch 按输入顺序返回（ApiEmbedder 显式按
+                # data[].index 排序后再映射，见 api.py:68），故 zip 对齐成立。
+                for (sig, _), vec in zip(pending[start:start + len(chunk)], vectors):
+                    sig.embedding = vec
+                _report("embedding", min(start + len(chunk), len(texts)), len(texts))
+
+        # add_batch 走 executemany（sqlite_store.py:150），N 次单条 INSERT 各自
+        # autocommit → 1 次批量提交。维度校验仍在，只是从"第 k 条失败"变成整批失败。
+        _report("writing", 0, len(pending))
+        self._store.add_batch([sig for sig, _ in pending])
+        for _, sl in pending:
+            self._store.set_slice_source(sl.trajectory_id, sl.slice_index, sl)
+        _report("writing", len(pending), len(pending))
 
     async def _process_sub_problem(
         self, sub_problem: dict, spec_id: str

@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
 import pathlib
@@ -12,7 +13,7 @@ import tempfile
 from typing import Any, Callable
 
 from fastapi import FastAPI, HTTPException, UploadFile
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from service.runstore import MemoryRunStore
@@ -20,6 +21,37 @@ from service.runstore import MemoryRunStore
 __all__ = ["create_app"]
 
 _WEB_DIR = pathlib.Path(__file__).parent / "web"
+
+# index.html 里 ?v= 后面的占位符。手工维护版本号会漏 —— 改了 app.js 忘记升版本，
+# 浏览器就拿缓存里的旧脚本配新 HTML，顶层绑定引用到不存在的元素/函数，整个前端
+# 初始化中断（表现是页面失灵，不是少个按钮），且没有任何报错。
+_ASSET_PLACEHOLDER = "__ASSET_V__"
+_VERSIONED_ASSETS = ("app.js", "style.css")
+
+
+def _render_index(web_dir: pathlib.Path) -> str:
+    """把 index.html 的资源版本占位符替换成静态资源的内容 hash。
+
+    用内容 hash 而非 mtime：git checkout 会改 mtime 但内容未必变，用 mtime 会
+    无谓地让缓存失效；hash 只在内容真的变了才变，缓存该留就留。
+    两个资源合成一个 hash —— 任一变化都刷新两者，多刷一次 CSS 的代价远小于
+    漏刷 JS，且省掉一套占位符。
+    """
+    html = (web_dir / "index.html").read_text(encoding="utf-8")
+    if _ASSET_PLACEHOLDER not in html:
+        # 静默失效正是本机制要消灭的东西，所以这里必须出声。
+        print(f"[uxflow] 警告: index.html 缺少 {_ASSET_PLACEHOLDER}，"
+              f"静态资源缓存失效未生效")
+        return html
+    digest = hashlib.sha256()
+    for name in sorted(_VERSIONED_ASSETS):     # 排序固定 → hash 可复现
+        path = web_dir / name
+        if path.exists():
+            digest.update(path.read_bytes())
+        else:
+            # 缺个资源不该让整个服务起不来 —— 降级成"这个文件不参与 hash"。
+            print(f"[uxflow] 警告: 缺少静态资源 {name}，未计入缓存版本")
+    return html.replace(_ASSET_PLACEHOLDER, digest.hexdigest()[:8])
 
 
 def create_app(
@@ -354,6 +386,21 @@ def create_app(
 
     # Static frontend (mounted last so API routes take precedence)
     if _WEB_DIR.exists():
+        # index.html 走动态渲染以注入资源 hash。这两个路由必须注册在 mount 之前：
+        # Starlette 按挂载顺序匹配，mount("/") 会吞掉其后注册的所有路径（实测）。
+        # 启动时渲染一次并缓存 —— 不是每个请求都读文件算 hash。
+        _index_html = _render_index(_WEB_DIR)
+
+        @app.get("/", include_in_schema=False)
+        async def _serve_index():
+            return HTMLResponse(_index_html)
+
+        @app.get("/index.html", include_in_schema=False)
+        async def _serve_index_alias():
+            # 直接访问 /index.html 也要拿到渲染版；否则 StaticFiles 会原样返回
+            # 带占位符的模板，?v=__ASSET_V__ 变成字面量，缓存失效彻底失灵。
+            return HTMLResponse(_index_html)
+
         app.mount("/", StaticFiles(directory=str(_WEB_DIR), html=True), name="web")
 
     return app
