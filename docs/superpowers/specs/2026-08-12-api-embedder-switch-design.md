@@ -110,13 +110,26 @@ large 至少不劣于 small。差距（9%）在 6 轮采样噪声范围内，**�
 
 用户 `.env` 无需新增任何字段，仅需 `UXFLOW_EMBED_BACKEND=api`。
 
-### 4.3 批次：`preferred_batch_size` 可选协议属性
+### 4.3 传输编码：base64
+
+请求体固定带 `encoding_format: "base64"`。实测（真实切片文本，3072 维）：
+
+| 批次 | JSON 浮点数组 | base64 | 缩减 | 耗时对比 |
+|---|---|---|---|---|
+| 32 | 1.85 MB | **0.50 MB** | 3.7× | 4.22s → 3.03s |
+| 128 | 7.39 MB | **2.01 MB** | 3.7× | 7.23s → 5.38s |
+
+解码后 norm=0.9998，数值无损。体积和耗时同时下降，无取舍，无条件采用。
+
+`ApiEmbedder` 需处理两种响应形态：`data[].embedding` 为 str 时按 base64 解 float32，为 list 时按原路径处理（保持对不支持该参数的端点的兼容）。
+
+### 4.4 批次：`preferred_batch_size` 可选协议属性
 
 `protocol.py` 增加可选属性声明；各实现取值：
 
 | 实现 | preferred_batch_size |
 |---|---|
-| `ApiEmbedder` | 128 |
+| `ApiEmbedder` | 32（可经 `UXFLOW_EMBED_BATCH` 覆盖） |
 | `LocalEmbedder` | 32 |
 | `FakeEmbedder` | 128 |
 
@@ -128,29 +141,56 @@ chunk_size = getattr(emb_model, "preferred_batch_size", _EMBED_CHUNK)
 
 `getattr` 带默认值确保：任何第三方实现无需修改即可运行，`runtime_checkable` 行为不受影响，`_EMBED_CHUNK = 32` 保留为兜底默认。
 
-**128 的依据**：吞吐收益在 256 附近已饱和（1024 维实测 32→20 t/s，256→40 t/s，512→50 t/s，256→512 仅多 25%）。因超时率与批次无关，大批次不降低超时概率，只增加单次超时的浪费。128 在 3072 维下响应体约 7.5MB，内存峰值最低，进度条最平滑（`pipeline.py:29` 原注释指出 chunk 边界是唯一进度更新点）。
+**默认 32 的依据**：目标用户在公司受限网络内使用，网关对响应体大小有拦截阈值。配合 base64，32 条的响应体约 0.5MB，安全余量大。吞吐上 32 并非最优（1024 维实测 32→20 t/s、256→40 t/s），但**可用性优先于吞吐**——被网关拦截则完全不可用。
 
-### 4.4 重试
+按网关上限选值的参照表（3072 维 + base64）：
+
+| 批次 | 响应体 |
+|---|---|
+| 128 | ~2.0 MB |
+| 64 | ~1.0 MB |
+| **32（默认）** | **~0.5 MB** |
+| 16 | ~0.25 MB |
+
+### 4.5 重试
 
 `ApiEmbedder` 内置：
 
-| 参数 | 值 |
-|---|---|
-| 单次超时 | 25s |
-| 最大尝试次数 | 5 |
-| 重试间隔 | 固定 1s（非指数退避） |
+| 参数 | 值 | 环境变量 |
+|---|---|---|
+| 单次超时 | 25s | `UXFLOW_EMBED_TIMEOUT` |
+| 最大尝试次数 | 5 | `UXFLOW_EMBED_MAX_TRIES` |
+| 重试间隔 | 固定 1s（非指数退避） | — |
 
 **仅对超时、5xx、429 重试。4xx 立即抛出**——认证失败或请求格式错重试 5 次仍是同样的错，只会把秒级可诊断的问题拖成分钟级。
 
-端到端验证（batch 512、1024 维、上述参数、6 轮）：6/6 成功，平均 23.85s/批，**21.5 texts/s**（含重试开销的真实吞吐），1113 条切片预估约 52 秒。
+端到端验证（batch 512、1024 维、上述参数、6 轮）：6/6 成功，平均 23.85s/批，**21.5 texts/s**（含重试开销的真实吞吐）。
 
-### 4.5 存量数据
+### 4.6 并发：客户端侧恒为 1
+
+实测重试**不产生并发连接**。排除环境中 2 条无关连接后：
+
+| 场景 | 峰值同时 ESTABLISHED | 累计开启套接字 |
+|---|---|---|
+| 强制重试（3s 超时 × 4 次） | **1** | 4 |
+| 正常单次（60s 超时） | **1** | 1 |
+
+httpx 超时时关闭旧 socket 再开新的，4 次重试是 4 条**先后**连接，任一时刻仅 1 条。滞留的是代理服务端的计算任务，不经过企业网关，不占网关连接数。
+
+因此对受限网络而言，**风险点只有单请求体积（已由 base64 + batch 32 解决），并发不是风险**。设计不引入线程池，串行执行即天然满足并发为 1。
+
+> 修正记录一：初版第 6 节称重试「会提高瞬时并发请求数」。该结论未经测量，实测为错。
+>
+> 修正记录二：排查中期曾报「峰值 3 条连接」。该数据无效——当时 `lsof` 解析有 bug，抓取的是进程打开的 .so 文件列表而非网络连接。
+
+
+### 4.7 存量数据
 
 新建独立数据库运行 API 后端；`~/.local/share/uxflow/uxflow.db`（1132 条 Qwen 向量，1024 维）原封保留。
 
 必要性：向量空间与维度均不兼容，混用会使召回排序完全错乱。`sqlite_store.py:128` 的 `_check_dim` 会在维度不一致时报错，但**语义不一致（同为 1024 维的 Qwen vs OpenAI 向量）无法被自动检测**——这是必须换库而非仅依赖校验的原因。
 
-### 4.6 阈值
+### 4.8 阈值
 
 本轮**不修改**默认值（`mount_threshold=0.50`、`UXFLOW_QUESTION_DEDUP_THRESHOLD=0.90`）。
 
@@ -169,35 +209,39 @@ chunk_size = getattr(emb_model, "preferred_batch_size", _EMBED_CHUNK)
 | 文件 | 改动 |
 |---|---|
 | `src/uxflow_embed/protocol.py` | 增加可选 `preferred_batch_size` 声明 |
-| `src/uxflow_embed/api.py` | 重试逻辑；`preferred_batch_size=128`；默认 model/dimension |
+| `src/uxflow_embed/api.py` | 重试逻辑；base64 编解码；`preferred_batch_size=32`；默认 model/dimension |
 | `src/uxflow_embed/local.py` | `preferred_batch_size=32` |
 | `src/uxflow_embed/fake.py` | `preferred_batch_size=128` |
-| `src/uxflow_runtime.py` | api 分支优先读 LITELLM 凭证；默认 large/3072 |
+| `src/uxflow_runtime.py` | api 分支优先读 LITELLM 凭证；默认 large/3072；读取 batch/timeout/tries 环境变量 |
 | `src/module1/pipeline.py` | `getattr` 读 chunk size |
-| `.env.example` | 更新 api 后端说明 |
+| `.env.example` | 更新 api 后端说明；新增受限网络调优指引 |
 | `README.md` / `README.zh-CN.md` | 嵌入后端章节 |
-| `tests/uxflow_embed/test_api.py` | 重试行为、4xx 不重试、batch size |
+| `tests/uxflow_embed/test_api.py` | 重试行为、4xx 不重试、base64 解码、batch size |
 | `tests/test_runtime_wiring.py` | 凭证回退顺序 |
 
 `local` 后端行为完全不变（`preferred_batch_size=32` 与现 `_EMBED_CHUNK=32` 等价），该路径零回归。
 
 ## 6. 已知代价
 
-1. **进度条变粗**：128 条一跳，非逐条爬升。但每跳间隔远短于当前本地后端，属净改善。
-2. **重试增加代理负载**：放弃的请求仍占用代理资源。实测该策略总耗时更短，但会提高瞬时并发请求数。
+1. **进度条粒度**：32 条一跳。与现有 `_EMBED_CHUNK=32` 一致，无变化。
+2. **吞吐让位于可用性**：默认批次 32 而非吞吐最优的 256，是为受限网络的可用性做的让步。网关宽松的用户可经 `UXFLOW_EMBED_BATCH` 上调。
+3. **重试增加代理服务端负载**：被放弃的请求仍在代理侧继续计算。该负载不经过企业网关（见 §4.6），但会消耗代理资源。
 
 ## 7. 未验证项（诚实标注）
 
 - **本地 Qwen 基准未测得**：torch 安装两次超时（后经清华源解决，但未回补基准）。因此**「API 比本地快 N 倍」无实测支撑**，仅有用户体感与一次 10 分钟无输出的迹象。文档中不应声称具体倍数。
-- **21.5 texts/s 测于 batch 512 / 1024 维**：最终配置为 batch 128 / 3072 维，实际吞吐需实现后复测。
-- **3072 维下 batch 128 的超时特性未单独验证**：3072 维仅在 batch 256 下实测通过（400 条全部成功）。
+- **21.5 texts/s 测于 batch 512 / 1024 维 / JSON 编码**：最终配置为 batch 32 / 3072 维 / base64，实际吞吐需实现后复测。因批次显著变小，吞吐预期低于该值。
+- **base64 仅在 batch 32 与 128 下验证**：其他批次未单独测试。
+- **企业网关的实际阈值未知**：batch 32（~0.5MB）是基于常见网关默认值的保守估计，非针对用户实际网关的实测。
 - **代理负载敏感**：所有吞吐数字测于特定时段，代理负载变化时会浮动。
 
 ## 8. 验收标准
 
 1. `UXFLOW_EMBED_BACKEND=api` 且仅配置 `LITELLM_BASE`/`LITELLM_KEY` 时可正常启动
 2. `ApiEmbedder` 返回 3072 维 L2 归一化向量
-3. 超时/5xx/429 触发重试；4xx 立即抛出（单元测试覆盖）
-4. `local` / `fake` 后端行为与改动前逐字节一致
-5. 全量测试通过
-6. 用真实轨迹数据完成一次端到端 ingest，记录实际吞吐
+3. base64 与 float 两种响应形态均能正确解析（单元测试覆盖）
+4. 超时/5xx/429 触发重试；4xx 立即抛出（单元测试覆盖）
+5. `UXFLOW_EMBED_BATCH` / `UXFLOW_EMBED_TIMEOUT` / `UXFLOW_EMBED_MAX_TRIES` 生效
+6. `local` / `fake` 后端行为与改动前逐字节一致
+7. 全量测试通过
+8. 用真实轨迹数据完成一次端到端 ingest，记录实际吞吐与响应体大小
