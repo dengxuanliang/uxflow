@@ -210,8 +210,8 @@ class TrajectoryPipeline:
         不 reset。on_trajectory(traj, source_path) 可选回调，用于把全文交给 TrajectoryStore。
 
         embedding 走批量：先把全部切片的签名算出来（纯 CPU，不含向量），再按
-        _EMBED_CHUNK 分块 embed_batch 回填。模型调用数 N → ceil(N/64)，这是本路径
-        最贵的一环（每次入库都付，非一次性成本）。
+        emb_model.preferred_batch_size 分块 embed_batch 回填。模型调用数
+        N → ceil(N/batch)，这是本路径最贵的一环（每次入库都付，非一次性成本）。
 
         on_progress(phase, done, total) 可选回调，phase ∈ {"slicing","embedding","writing"}。
         embedding 阶段每完成一个 chunk 报一次 —— 批量化把 N 次小调用压成
@@ -256,11 +256,15 @@ class TrajectoryPipeline:
 
         if emb_model is not None and texts:
             # 先报一条 0/N：向量化是整条链路最慢的一段，而进度只在 chunk 边界更新。
-            # 切片数 <= _EMBED_CHUNK 时只有一个 chunk，不先发这条，界面会一直停在
+            # 切片数 <= chunk_size 时只有一个 chunk，不先发这条，界面会一直停在
             # "切片 N/N" 直到整批算完 —— 用户看到的是"卡在切片"，实际在跑向量化。
             _report("embedding", 0, len(texts))
-            for start in range(0, len(texts), _EMBED_CHUNK):
-                chunk = texts[start:start + _EMBED_CHUNK]
+            # 后端自报最优批次：Api 受网关响应体上限约束（32 条 3072 维 base64
+            # ≈0.5MB，网关上限约 1MB），Local 与其内部 encode batch_size 对齐（32）。
+            # getattr 带默认值 → 第三方实现不实现该属性也能跑，退回 _EMBED_CHUNK。
+            chunk_size = getattr(emb_model, "preferred_batch_size", _EMBED_CHUNK)
+            for start in range(0, len(texts), chunk_size):
+                chunk = texts[start:start + chunk_size]
                 vectors = emb_model.embed_batch(chunk)
                 # 数量必须严格相等：zip 遇到短列表会**静默截断**，尾部切片就带着
                 # 空向量入库 —— 不报错，只是在向量召回里永远命不中。宁可炸掉本次
