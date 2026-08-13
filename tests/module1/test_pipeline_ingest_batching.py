@@ -144,6 +144,53 @@ def test_chunking_splits_large_batches(tmp_path):
             assert by_key[(sl.trajectory_id, sl.slice_index)].embedding == want
 
 
+def test_chunking_honours_embedder_preferred_batch_size(tmp_path):
+    """分块大小必须取自后端自报的 preferred_batch_size，而非模块常量。
+
+    批次上限是后端属性而非调用点属性：ApiEmbedder 受网关响应体上限约束
+    （32 条 3072 维 base64 ≈0.5MB，上限约 1MB）。取 8 —— 与 _EMBED_CHUNK(32)
+    和 FakeEmbedder(128) 都不同，断言才不会碰巧撞上 fallback 而假绿。
+    """
+    import json
+    from module1.pipeline import _EMBED_CHUNK
+
+    batch = 8
+    assert batch != _EMBED_CHUNK, "取值必须区别于 fallback，否则测不出差异"
+
+    class PreferredBatchEmbedder(CountingEmbedder):
+        preferred_batch_size = batch
+
+    n_traj = batch * 3 + 5             # 29 条 → 4 批（8/8/8/5），故意非整除
+    path = tmp_path / "many.jsonl"
+    path.write_text("\n".join(json.dumps({
+        "id": f"t{i}",
+        "messages": [{"role": "user", "content": f"q{i}"},
+                     {"role": "assistant", "content": f"a{i}"}],
+    }) for i in range(n_traj)), encoding="utf-8")
+
+    emb = PreferredBatchEmbedder()
+    p = TrajectoryPipeline(config=_cfg(embedding_model=emb), gateway=None)
+    p.ingest_trajectories([path])
+
+    n_texts = sum(len(slice_trajectory(t)) for t in load_trajectories(path))
+    assert n_texts > batch, "fixture 必须跨多个 chunk 才有意义"
+
+    expected_calls = -(-n_texts // batch)          # ceil(n_texts / batch)
+    assert emb.batch_calls == expected_calls, (
+        f"期望 ceil({n_texts}/{batch})={expected_calls} 次 embed_batch，"
+        f"实际 {emb.batch_calls}（batch_sizes={emb.batch_sizes}）")
+    assert all(size <= batch for size in emb.batch_sizes), (
+        f"有批次超过后端自报上限 {batch}：{emb.batch_sizes}")
+    assert sum(emb.batch_sizes) == n_texts, "分块丢了或重复了文本"
+
+    # 跨批错位检查：每个切片仍须持有自己那段文本的向量
+    by_key = {(s.trajectory_id, s.slice_index): s for s in p._store._signatures}
+    for traj in load_trajectories(path):
+        for sl in slice_trajectory(traj):
+            want = CountingEmbedder._vec(build_embedding_text(sl))
+            assert by_key[(sl.trajectory_id, sl.slice_index)].embedding == want
+
+
 # ── on_progress: 入库三阶段可观测性 ──────────────────────────────────
 def test_on_progress_reports_three_phases(trajectories_path):
     """三个阶段都要报：切片 / 向量化 / 写库。"""
