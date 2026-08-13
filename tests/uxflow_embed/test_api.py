@@ -179,6 +179,36 @@ def test_base64_encoding_format():
     assert abs(result[0] - 0.5) < 1e-6
 
 
+def test_preferred_batch_size_from_constructor():
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        preferred_batch_size=64,
+    )
+    assert emb.preferred_batch_size == 64
+
+
+def test_dimensions_parameter_sent():
+    """The model does native dimension reduction; ask for it rather than truncating."""
+    received = {}
+
+    def handler(request):
+        import json
+        received.update(json.loads(request.content))
+        dim = received.get("dimensions", 8)
+        return httpx.Response(200, json={
+            "data": [{"embedding": [0.707] * dim, "index": 0}]
+        })
+
+    emb = ApiEmbedder(
+        api_key="test", model="text-embedding-3-large", dimension=1024,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    result = emb.embed("hello")
+    assert received.get("dimensions") == 1024
+    assert len(result) == 1024
+
+
 def test_out_of_order_index_realigns_to_input(monkeypatch):
     # Server returns data in REVERSED index order; output must realign to input order.
     def handler(request):

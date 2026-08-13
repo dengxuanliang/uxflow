@@ -33,6 +33,7 @@ class ApiEmbedder:
         timeout: float = 25.0,
         max_tries: int = 5,
         retry_delay: float = 1.0,
+        preferred_batch_size: int = 32,
         transport: httpx.BaseTransport | None = None,
     ):
         key = api_key or os.environ.get("OPENAI_API_KEY")
@@ -48,6 +49,7 @@ class ApiEmbedder:
         self._timeout = timeout
         self._max_tries = max_tries
         self._retry_delay = retry_delay
+        self._preferred_batch_size = preferred_batch_size
         self._client = httpx.Client(
             headers={"Authorization": f"Bearer {key}"},
             timeout=self._timeout,
@@ -67,6 +69,11 @@ class ApiEmbedder:
     def dimension(self) -> int:
         return self._dimension
 
+    @property
+    def preferred_batch_size(self) -> int:
+        """Batch size that keeps the response under the gateway's size limit."""
+        return self._preferred_batch_size
+
     def embed(self, text: str) -> list[float]:
         return self.embed_batch([text])[0]
 
@@ -83,6 +90,7 @@ class ApiEmbedder:
                         "model": self._model,
                         "input": texts,
                         "encoding_format": "base64",
+                        "dimensions": self._dimension,
                     },
                 )
                 resp.raise_for_status()
