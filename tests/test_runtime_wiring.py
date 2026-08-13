@@ -101,6 +101,77 @@ def test_entry_scripts_do_not_hardcode_local_embedder():
         assert "make_embedder" in text, f"{name} must build its embedder via make_embedder()"
 
 
+def test_api_backend_prefers_litellm_credentials(monkeypatch):
+    """LITELLM_KEY/BASE win, so switching to api needs no new .env entries."""
+    monkeypatch.setenv("UXFLOW_EMBED_BACKEND", "api")
+    monkeypatch.setenv("LITELLM_BASE", "http://lit.local/v1")
+    monkeypatch.setenv("LITELLM_KEY", "lit-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-key")
+
+    emb = make_embedder()
+    assert "lit.local" in emb._url
+    assert "lit-key" in emb._client.headers["Authorization"]
+
+
+def test_api_backend_falls_back_to_openai_key(monkeypatch):
+    monkeypatch.setenv("UXFLOW_EMBED_BACKEND", "api")
+    monkeypatch.delenv("LITELLM_BASE", raising=False)
+    monkeypatch.delenv("LITELLM_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "openai-fallback")
+
+    emb = make_embedder()
+    assert "openai-fallback" in emb._client.headers["Authorization"]
+
+
+def test_api_backend_defaults(monkeypatch):
+    """Defaults are large/3072/batch-32 -- the gateway-safe combination."""
+    monkeypatch.setenv("UXFLOW_EMBED_BACKEND", "api")
+    monkeypatch.setenv("LITELLM_KEY", "k")
+    monkeypatch.delenv("UXFLOW_EMBED_API_MODEL", raising=False)
+    monkeypatch.delenv("UXFLOW_EMBED_API_DIM", raising=False)
+    monkeypatch.delenv("UXFLOW_EMBED_BATCH", raising=False)
+    monkeypatch.delenv("UXFLOW_EMBED_RATELIMIT_BASE", raising=False)
+    monkeypatch.delenv("UXFLOW_EMBED_RATELIMIT_CAP", raising=False)
+
+    emb = make_embedder()
+    assert emb.dimension == 3072
+    assert emb.preferred_batch_size == 32
+    # 429 backoff defaults: an Azure tier quota window is ~60s, so 2s doubling
+    # up to 32s gives the window a real chance to reopen within max_tries.
+    assert emb._rate_limit_base == 2.0
+    assert emb._rate_limit_cap == 32.0
+
+
+def test_api_backend_respects_tunable_env_vars(monkeypatch):
+    monkeypatch.setenv("UXFLOW_EMBED_BACKEND", "api")
+    monkeypatch.setenv("LITELLM_KEY", "k")
+    monkeypatch.setenv("UXFLOW_EMBED_BATCH", "64")
+    monkeypatch.setenv("UXFLOW_EMBED_TIMEOUT", "10")
+    monkeypatch.setenv("UXFLOW_EMBED_MAX_TRIES", "3")
+    monkeypatch.setenv("UXFLOW_EMBED_RATELIMIT_BASE", "4.0")
+    monkeypatch.setenv("UXFLOW_EMBED_RATELIMIT_CAP", "16.0")
+
+    emb = make_embedder()
+    assert emb.preferred_batch_size == 64
+    assert emb._timeout == 10.0
+    assert emb._max_tries == 3
+    assert emb._rate_limit_base == 4.0
+    assert emb._rate_limit_cap == 16.0
+
+
+def test_api_backend_without_any_key_exits_with_guidance(monkeypatch):
+    """Missing credentials must name BOTH accepted variables."""
+    monkeypatch.setenv("UXFLOW_EMBED_BACKEND", "api")
+    monkeypatch.delenv("LITELLM_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit) as exc:
+        make_embedder()
+    msg = str(exc.value)
+    assert "LITELLM_KEY" in msg
+    assert "OPENAI_API_KEY" in msg
+
+
 def test_entry_scripts_guard_llm_config():
     """An empty key must fail up front, not as 'Call 1 failed after retries'.
 

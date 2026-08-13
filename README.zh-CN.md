@@ -242,8 +242,14 @@ uv run python scripts/inspector_serve.py     # 然后打开 http://127.0.0.1:800
 嵌入能力通过 `uxflow_embed` 中统一的 `Embedder` 协议实现可插拔:
 
 - **`fake`**（默认）—— 确定性输出，无 ML 依赖。向量不带语义。
-- **`local`** —— 经 sentence-transformers 跑 Qwen3-Embedding-0.6B。需要 `local-embed` extra，首次使用时下载模型。
-- **`api`** —— 任何 OpenAI 兼容的嵌入端点。需要 `OPENAI_API_KEY`，可用 `UXFLOW_EMBED_API_MODEL` / `_DIM` / `_BASE` 调整。
+- **`local`** —— 经 sentence-transformers 跑 Qwen3-Embedding-0.6B。需要 `local-embed` extra，首次使用时下载模型。1024 维。
+- **`api`** —— 任何 OpenAI 兼容的嵌入端点。凭据回退到上文已配置的 `LITELLM_KEY` / `LITELLM_BASE` 组合，再回退到 `OPENAI_API_KEY` / `UXFLOW_EMBED_API_BASE`——也就是说，如果你已经在走 LiteLLM 代理，切换后端无需新增任何凭据。默认使用 `text-embedding-3-large`，原生 3072 维。
+
+**网络调优。** api 后端在受限网络下由三个环境变量控制: `UXFLOW_EMBED_BATCH`（默认 32）、`UXFLOW_EMBED_TIMEOUT`（默认 25s）、`UXFLOW_EMBED_MAX_TRIES`（默认 5）。3072 维下，批次 32 对应约 0.5 MB 的响应体——若你的网关限制不同，完整的响应体大小对照表见 [`.env.example`](.env.example)。限流（429）重试采用指数退避而非固定间隔，由 `UXFLOW_EMBED_RATELIMIT_BASE`（默认 2.0s）与 `UXFLOW_EMBED_RATELIMIT_CAP`（默认 32.0s）调节——仅当你的服务商配额窗口短于常见的 ~60s 时才需调低 base。
+
+**吞吐。** 在同一批 1113 条真实轨迹切片上实测: 本地 CPU 嵌入为 0.57 texts/s，出货配置的 api 后端为 5.7 texts/s——约 10 倍。之所以在 CPU 上测，是因为目标部署机器没有 MPS/CUDA。
+
+**维度。** 3072 是 `text-embedding-3-large` 的原生宽度，本项目不做截断。在 400 条真实切片上实测，截断到 1024 维相对 3072 全维基准的 top-20 召回重叠率为 91.9%，1536 维为 95.5%。1113 条向量在 3072 维下的存储占用为 13 MB，这也是保留全维的原因。
 
 ### 数据目录
 

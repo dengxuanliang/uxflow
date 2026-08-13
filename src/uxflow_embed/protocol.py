@@ -15,7 +15,11 @@ __all__ = ["Embedder"]
 
 @runtime_checkable
 class Embedder(Protocol):
-    """Produces L2-normalized vectors. Implementations: Fake / Local / Api."""
+    """Produces L2-normalized vectors. Implementations: Fake / Local / Api.
+
+    Optional attributes that implementations MAY provide:
+    - preferred_batch_size: int — optimal batch size for embed_batch calls
+    """
 
     @property
     def dimension(self) -> int: ...

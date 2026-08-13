@@ -25,7 +25,7 @@ from module2.rerank import rerank
 __all__ = ["TrajectoryPipeline", "PipelineConfig"]
 
 # 一次 embed_batch 最多喂多少条。ApiEmbedder 把整批塞进单个 HTTP 请求
-# （api.py:65），不分块会撞 provider 的 input 条数/token 上限。
+# （见 ApiEmbedder._embed_nonempty），不分块会撞 provider 的 input 条数/token 上限。
 # 取 32 而非更大：LocalEmbedder 内部本就按 batch_size=32 二次切分（local.py:67），
 # 所以对它而言 32 和 64 的计算量完全一样，但外层分块更细 → 进度更新更频繁。
 # 向量化是最慢的一段，chunk 边界是唯一的进度更新点。
@@ -210,12 +210,12 @@ class TrajectoryPipeline:
         不 reset。on_trajectory(traj, source_path) 可选回调，用于把全文交给 TrajectoryStore。
 
         embedding 走批量：先把全部切片的签名算出来（纯 CPU，不含向量），再按
-        _EMBED_CHUNK 分块 embed_batch 回填。模型调用数 N → ceil(N/64)，这是本路径
-        最贵的一环（每次入库都付，非一次性成本）。
+        emb_model.preferred_batch_size 分块 embed_batch 回填。模型调用数
+        N → ceil(N/batch)，这是本路径最贵的一环（每次入库都付，非一次性成本）。
 
         on_progress(phase, done, total) 可选回调，phase ∈ {"slicing","embedding","writing"}。
         embedding 阶段每完成一个 chunk 报一次 —— 批量化把 N 次小调用压成
-        ceil(N/64) 次大调用，总时间更短，但单步不可观测，必须显式报进度。
+        ceil(N/batch) 次大调用，总时间更短，但单步不可观测，必须显式报进度。
         """
         emb_model = self._config.embedding_model
         pending: list[tuple[object, object]] = []      # (signature, slice)
@@ -256,11 +256,15 @@ class TrajectoryPipeline:
 
         if emb_model is not None and texts:
             # 先报一条 0/N：向量化是整条链路最慢的一段，而进度只在 chunk 边界更新。
-            # 切片数 <= _EMBED_CHUNK 时只有一个 chunk，不先发这条，界面会一直停在
+            # 切片数 <= chunk_size 时只有一个 chunk，不先发这条，界面会一直停在
             # "切片 N/N" 直到整批算完 —— 用户看到的是"卡在切片"，实际在跑向量化。
             _report("embedding", 0, len(texts))
-            for start in range(0, len(texts), _EMBED_CHUNK):
-                chunk = texts[start:start + _EMBED_CHUNK]
+            # 后端自报最优批次：Api 受网关响应体上限约束（32 条 3072 维 base64
+            # ≈0.5MB，网关上限约 1MB），Local 与其内部 encode batch_size 对齐（32）。
+            # getattr 带默认值 → 第三方实现不实现该属性也能跑，退回 _EMBED_CHUNK。
+            chunk_size = getattr(emb_model, "preferred_batch_size", _EMBED_CHUNK)
+            for start in range(0, len(texts), chunk_size):
+                chunk = texts[start:start + chunk_size]
                 vectors = emb_model.embed_batch(chunk)
                 # 数量必须严格相等：zip 遇到短列表会**静默截断**，尾部切片就带着
                 # 空向量入库 —— 不报错，只是在向量召回里永远命不中。宁可炸掉本次
@@ -270,7 +274,8 @@ class TrajectoryPipeline:
                         f"embed_batch 返回 {len(vectors)} 条，与输入 {len(chunk)} 条不符"
                         f"（chunk 起始位置 {start}）")
                 # 位置映射：embed_batch 按输入顺序返回（ApiEmbedder 显式按
-                # data[].index 排序后再映射，见 api.py:68），故 zip 对齐成立。
+                # data[].index 排序后再映射，见 ApiEmbedder._embed_nonempty 中
+                # 按 data[].index 排序的一段），故 zip 对齐成立。
                 for (sig, _), vec in zip(pending[start:start + len(chunk)], vectors):
                     sig.embedding = vec
                 _report("embedding", min(start + len(chunk), len(texts)), len(texts))

@@ -21,3 +21,26 @@ def test_non_impl_fails_isinstance():
     class Missing:
         def embed(self, text): ...
     assert not isinstance(Missing(), Embedder)
+
+
+def test_preferred_batch_size_is_optional():
+    """Implementations without preferred_batch_size still satisfy the Protocol."""
+    from uxflow_embed.protocol import Embedder
+
+    class MinimalEmbedder:
+        @property
+        def dimension(self) -> int:
+            return 8
+
+        def embed(self, text: str) -> list[float]:
+            return [0.0] * 8
+
+        def embed_batch(self, texts: list[str]) -> list[list[float]]:
+            return [[0.0] * 8] * len(texts)
+
+    # Should NOT raise — preferred_batch_size is optional
+    assert isinstance(MinimalEmbedder(), Embedder)
+
+    # getattr with default should work
+    emb = MinimalEmbedder()
+    assert getattr(emb, "preferred_batch_size", 99) == 99

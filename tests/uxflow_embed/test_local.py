@@ -31,3 +31,18 @@ def test_local_files_only_param_defaults_false():
     from uxflow_embed import LocalEmbedder
     sig = inspect.signature(LocalEmbedder.__init__)
     assert sig.parameters["local_files_only"].default is False
+
+
+def test_preferred_batch_size():
+    """LocalEmbedder declares batch 32, matching its internal encode batch_size.
+
+    Read off an uninitialized instance rather than a constructed one: the value
+    is a constant that touches no instance state, while LocalEmbedder() would
+    load a ~1.1GB model (and hit the network on a cold HF cache). Going through
+    __get__ on a real instance -- rather than calling .fget() directly -- keeps
+    this honest: if the property ever starts reading self, it raises here
+    instead of silently passing. No skip guard needed; nothing imports torch.
+    """
+    from uxflow_embed import LocalEmbedder
+    uninitialized = object.__new__(LocalEmbedder)
+    assert uninitialized.preferred_batch_size == 32

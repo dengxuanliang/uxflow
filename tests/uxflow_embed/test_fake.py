@@ -33,3 +33,7 @@ def test_embed_batch_matches_embed():
 
 def test_empty_batch_returns_empty():
     assert FakeEmbedder().embed_batch([]) == []
+
+
+def test_preferred_batch_size():
+    assert FakeEmbedder().preferred_batch_size == 128

@@ -242,8 +242,14 @@ All configuration is environment-driven; [`.env.example`](.env.example) document
 Embedding is pluggable behind a single `Embedder` protocol in `uxflow_embed`:
 
 - **`fake`** (default) — deterministic, no ML dependencies. Vectors carry no semantics.
-- **`local`** — Qwen3-Embedding-0.6B via sentence-transformers. Needs the `local-embed` extra; downloads the model on first use.
-- **`api`** — any OpenAI-compatible embedding endpoint. Needs `OPENAI_API_KEY`; tune with `UXFLOW_EMBED_API_MODEL` / `_DIM` / `_BASE`.
+- **`local`** — Qwen3-Embedding-0.6B via sentence-transformers. Needs the `local-embed` extra; downloads the model on first use. 1024-dim.
+- **`api`** — any OpenAI-compatible embedding endpoint. Credentials fall back to the `LITELLM_KEY` / `LITELLM_BASE` pair already required above, then to `OPENAI_API_KEY` / `UXFLOW_EMBED_API_BASE` — so if you already run through the LiteLLM proxy, switching backends needs no new credentials. Defaults to `text-embedding-3-large` at its native 3072 dimensions.
+
+**Network tuning.** Three env vars govern the api backend's behavior on a restricted network: `UXFLOW_EMBED_BATCH` (default 32), `UXFLOW_EMBED_TIMEOUT` (default 25s), `UXFLOW_EMBED_MAX_TRIES` (default 5). At 3072 dimensions, batch 32 yields ~0.5 MB responses — see [`.env.example`](.env.example) for the full response-size table if your gateway's limit differs. Rate-limit (429) retries back off exponentially instead of retrying at the flat delay, tunable via `UXFLOW_EMBED_RATELIMIT_BASE` (default 2.0s) and `UXFLOW_EMBED_RATELIMIT_CAP` (default 32.0s) — lower the base only if your provider's quota window is shorter than the usual ~60s.
+
+**Throughput.** Measured on the same 1113 real trajectory slices: local embedding on CPU runs 0.57 texts/s, versus 5.7 texts/s for the shipped api configuration — roughly 10x. Measured on CPU because the target deployment machines have no MPS/CUDA.
+
+**Dimensions.** 3072 is `text-embedding-3-large`'s native width; the project does not truncate it. Truncating to 1024 dimensions measured 91.9% top-20 recall overlap against the full 3072-dim baseline on 400 real slices; 1536 measured 95.5%. Storage for 1113 vectors at 3072 dimensions is 13 MB, which is why keeping the full width was worth it.
 
 ### Data directory
 
