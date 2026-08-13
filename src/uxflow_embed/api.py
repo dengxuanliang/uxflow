@@ -99,6 +99,19 @@ class ApiEmbedder:
 
         vectors = self._embed_nonempty([texts[i] for i in keep])
 
+        # zip() stops at the shorter iterable, so a short response would leave
+        # trailing slots at their pre-filled zero vector — indistinguishable
+        # from a legitimately empty text, and permanently unrecallable. The
+        # pipeline guards batch length for exactly this reason (「宁可炸掉本次
+        # 入库，也不要悄悄写坏索引」), but that guard cannot fire here because
+        # embed_batch always returns len(texts). So the check belongs here.
+        if len(vectors) != len(keep):
+            raise ValueError(
+                f"model {self._model!r} at {self._url} returned "
+                f"{len(vectors)} embeddings for {len(keep)} non-empty inputs; "
+                f"refusing to guess which text each vector belongs to"
+            )
+
         # Reassemble positionally: every input gets exactly one slot back, in
         # the original order. Getting this wrong would silently write the wrong
         # vector to the wrong slice, which is worse than crashing.
@@ -130,8 +143,21 @@ class ApiEmbedder:
                     },
                 )
                 resp.raise_for_status()
-                rows = sorted(resp.json()["data"], key=lambda d: d["index"])
-                return [self._decode_embedding(r["embedding"]) for r in rows]
+
+                # Parse the envelope, failing explicitly if it's malformed. A 200
+                # carrying {"error": ...} is plausible proxy behavior, so the msg
+                # should preserve the server's own words for whoever debugs this.
+                # Consistent with _decode_embedding, which wraps base64 failures.
+                try:
+                    data = resp.json()["data"]
+                    rows = sorted(data, key=lambda d: d["index"])
+                    return [self._decode_embedding(r["embedding"]) for r in rows]
+                except (KeyError, TypeError, IndexError) as e:
+                    body = resp.text[:200]  # truncate if huge
+                    raise ValueError(
+                        f"model {self._model!r} at {self._url} returned "
+                        f"malformed response: {e!r}. Body preview: {body}"
+                    ) from None
             except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
                 status = (
                     e.response.status_code

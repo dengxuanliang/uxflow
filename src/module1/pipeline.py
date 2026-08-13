@@ -25,7 +25,7 @@ from module2.rerank import rerank
 __all__ = ["TrajectoryPipeline", "PipelineConfig"]
 
 # 一次 embed_batch 最多喂多少条。ApiEmbedder 把整批塞进单个 HTTP 请求
-# （api.py:65），不分块会撞 provider 的 input 条数/token 上限。
+# （见 ApiEmbedder._embed_nonempty），不分块会撞 provider 的 input 条数/token 上限。
 # 取 32 而非更大：LocalEmbedder 内部本就按 batch_size=32 二次切分（local.py:67），
 # 所以对它而言 32 和 64 的计算量完全一样，但外层分块更细 → 进度更新更频繁。
 # 向量化是最慢的一段，chunk 边界是唯一的进度更新点。
@@ -274,7 +274,8 @@ class TrajectoryPipeline:
                         f"embed_batch 返回 {len(vectors)} 条，与输入 {len(chunk)} 条不符"
                         f"（chunk 起始位置 {start}）")
                 # 位置映射：embed_batch 按输入顺序返回（ApiEmbedder 显式按
-                # data[].index 排序后再映射，见 api.py:68），故 zip 对齐成立。
+                # data[].index 排序后再映射，见 ApiEmbedder._embed_nonempty 中
+                # 按 data[].index 排序的一段），故 zip 对齐成立。
                 for (sig, _), vec in zip(pending[start:start + len(chunk)], vectors):
                     sig.embedding = vec
                 _report("embedding", min(start + len(chunk), len(texts)), len(texts))

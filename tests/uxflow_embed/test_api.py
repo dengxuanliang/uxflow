@@ -425,6 +425,140 @@ def test_zero_vector_is_not_normalized_to_nan():
     assert out[0] == [0.0] * 8
 
 
+def test_short_response_raises_instead_of_zero_filling():
+    """Fewer rows back than sent must fail loudly, not silently zero-fill.
+
+    pipeline.py guards with `if len(vectors) != len(chunk): raise` -- 「宁可炸掉
+    本次入库，也不要悄悄写坏索引」. Since embed_batch always returns len(texts),
+    that guard can never fire here, so the check has to live in the embedder.
+    A silently dropped vector makes a real slice permanently unrecallable.
+    """
+    def handler(request):
+        # 3 texts sent, only 2 rows returned.
+        return httpx.Response(200, json={"data": [
+            {"embedding": [1.0] * 8, "index": 0},
+            {"embedding": [2.0] * 8, "index": 1},
+        ]})
+
+    emb = ApiEmbedder(
+        api_key="test", model="text-embedding-3-large", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(ValueError) as excinfo:
+        emb.embed_batch(["a", "b", "c"])
+
+    msg = str(excinfo.value)
+    assert "3" in msg and "2" in msg, f"must name expected vs actual: {msg}"
+    assert "text-embedding-3-large" in msg, "error must name the model"
+    assert "https://example.com/v1/embeddings" in msg, "error must name the endpoint"
+
+
+def test_long_response_raises_too():
+    """More rows than sent is equally wrong -- the same guard, other direction."""
+    def handler(request):
+        return httpx.Response(200, json={"data": [
+            {"embedding": [1.0] * 8, "index": i} for i in range(4)
+        ]})
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(ValueError) as excinfo:
+        emb.embed_batch(["a", "b"])
+
+    msg = str(excinfo.value)
+    assert "2" in msg and "4" in msg, f"must name expected vs actual: {msg}"
+
+
+def test_short_response_raises_even_with_empty_texts_in_batch():
+    """The interaction that hides the bug: blanks already zero-fill slots, so a
+    short response looks exactly like a legitimately empty text."""
+    def handler(request):
+        import json
+        # 2 non-empty texts sent ("a","c"), only 1 row back.
+        assert json.loads(request.content)["input"] == ["a", "c"]
+        return httpx.Response(200, json={"data": [
+            {"embedding": [1.0] * 8, "index": 0},
+        ]})
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(ValueError) as excinfo:
+        emb.embed_batch(["a", "", "c"])
+
+    msg = str(excinfo.value)
+    # The count must be against the 2 non-empty texts actually sent, not the 3
+    # inputs -- otherwise the message misleads whoever debugs it.
+    assert "2" in msg and "1" in msg, f"must count sent texts, not inputs: {msg}"
+
+
+def test_response_without_data_key_raises_with_context():
+    """A 200 carrying {"error": ...} is plausible proxy behaviour; it must not
+    surface as a bare KeyError with no clue where it came from."""
+    def handler(request):
+        return httpx.Response(200, json={"error": "quota exhausted"})
+
+    emb = ApiEmbedder(
+        api_key="test", model="text-embedding-3-large", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(ValueError) as excinfo:
+        emb.embed("hello")
+
+    msg = str(excinfo.value)
+    assert "text-embedding-3-large" in msg, "error must name the model"
+    assert "https://example.com/v1/embeddings" in msg, "error must name the endpoint"
+    assert "quota exhausted" in msg, "the server's own message must survive"
+
+
+def test_row_missing_index_raises_with_context():
+    """Ordering depends on data[].index; without it we cannot align safely."""
+    def handler(request):
+        return httpx.Response(200, json={
+            "data": [{"embedding": [1.0] * 8}]  # no "index"
+        })
+
+    emb = ApiEmbedder(
+        api_key="test", model="text-embedding-3-large", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(ValueError) as excinfo:
+        emb.embed("hello")
+
+    msg = str(excinfo.value)
+    assert "text-embedding-3-large" in msg, "error must name the model"
+    assert "https://example.com/v1/embeddings" in msg, "error must name the endpoint"
+
+
+def test_malformed_response_is_not_retried():
+    """A malformed envelope will not fix itself -- same reasoning as 4xx."""
+    calls = [0]
+
+    def handler(request):
+        calls[0] += 1
+        return httpx.Response(200, json={"error": "nope"})
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+        max_tries=5,
+        retry_delay=0.01,
+    )
+    with pytest.raises(ValueError):
+        emb.embed("hello")
+
+    assert calls[0] == 1, "malformed responses must not be retried"
+
+
 def test_base64_encoding_format():
     """When server returns base64, decode to float32 correctly."""
     import base64
