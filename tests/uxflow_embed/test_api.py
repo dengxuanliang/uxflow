@@ -156,6 +156,29 @@ def test_timeout_triggers_retry():
     assert attempt[0] == 5
 
 
+def test_base64_encoding_format():
+    """When server returns base64, decode to float32 correctly."""
+    import base64, struct
+
+    def handler(request):
+        import json
+        body = json.loads(request.content)
+        assert body.get("encoding_format") == "base64"
+        vec = [0.5, 0.5, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0]
+        raw = struct.pack(f"{len(vec)}f", *vec)
+        b64 = base64.b64encode(raw).decode("ascii")
+        return httpx.Response(200, json={"data": [{"embedding": b64, "index": 0}]})
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    result = emb.embed("hello")
+    assert len(result) == 8
+    assert abs(result[0] - 0.5) < 1e-6
+
+
 def test_out_of_order_index_realigns_to_input(monkeypatch):
     # Server returns data in REVERSED index order; output must realign to input order.
     def handler(request):

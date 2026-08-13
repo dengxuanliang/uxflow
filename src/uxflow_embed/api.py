@@ -9,7 +9,9 @@ from the api_key arg or the OPENAI_API_KEY env var.
 
 from __future__ import annotations
 
+import base64
 import os
+import struct
 import time
 
 import httpx
@@ -76,11 +78,16 @@ class ApiEmbedder:
         for attempt in range(1, self._max_tries + 1):
             try:
                 resp = self._client.post(
-                    self._url, json={"model": self._model, "input": texts}
+                    self._url,
+                    json={
+                        "model": self._model,
+                        "input": texts,
+                        "encoding_format": "base64",
+                    },
                 )
                 resp.raise_for_status()
                 rows = sorted(resp.json()["data"], key=lambda d: d["index"])
-                return [self._ensure_dimension(r["embedding"]) for r in rows]
+                return [self._decode_embedding(r["embedding"]) for r in rows]
             except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
                 if isinstance(e, httpx.HTTPStatusError):
                     # 4xx means the request itself is wrong (bad key, malformed
@@ -107,6 +114,19 @@ class ApiEmbedder:
         # max_tries >= 1 is enforced in __init__, so the loop always runs at
         # least once and always assigns last_exc before falling through here.
         raise last_exc
+
+    def _decode_embedding(self, raw) -> list[float]:
+        """Decode base64 or list embedding, then truncate/pad + L2-normalize.
+
+        Providers that honour encoding_format return a base64 float32 blob; ones
+        that ignore it return a plain list. Handle both so the switch is safe.
+        """
+        if isinstance(raw, str):
+            blob = base64.b64decode(raw)
+            count = len(blob) // 4
+            vec = struct.unpack(f"{count}f", blob)
+            return self._ensure_dimension(list(vec))
+        return self._ensure_dimension(raw)
 
     def _ensure_dimension(self, raw: list[float]) -> list[float]:
         vec = np.asarray(raw, dtype=np.float32)
