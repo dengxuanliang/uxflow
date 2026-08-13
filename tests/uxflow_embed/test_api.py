@@ -158,7 +158,8 @@ def test_timeout_triggers_retry():
 
 def test_base64_encoding_format():
     """When server returns base64, decode to float32 correctly."""
-    import base64, struct
+    import base64
+    import struct
 
     def handler(request):
         import json
