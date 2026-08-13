@@ -10,6 +10,7 @@ from the api_key arg or the OPENAI_API_KEY env var.
 from __future__ import annotations
 
 import base64
+import binascii
 import os
 import struct
 import time
@@ -123,16 +124,27 @@ class ApiEmbedder:
         # least once and always assigns last_exc before falling through here.
         raise last_exc
 
-    def _decode_embedding(self, raw) -> list[float]:
+    def _decode_embedding(self, raw: str | list[float]) -> list[float]:
         """Decode base64 or list embedding, then truncate/pad + L2-normalize.
 
         Providers that honour encoding_format return a base64 float32 blob; ones
         that ignore it return a plain list. Handle both so the switch is safe.
         """
         if isinstance(raw, str):
-            blob = base64.b64decode(raw)
-            count = len(blob) // 4
-            vec = struct.unpack(f"{count}f", blob)
+            try:
+                blob = base64.b64decode(raw)
+                count = len(blob) // 4
+                # Explicit little-endian: the wire format is fixed, so it must
+                # not follow whatever byte order the client host happens to use.
+                vec = struct.unpack(f"<{count}f", blob)
+            except (binascii.Error, struct.error) as e:
+                # Not an httpx error, so it would otherwise skip the retry loop
+                # and surface as a bare stdlib traceback naming neither the
+                # model nor the endpoint it came from.
+                raise ValueError(
+                    f"could not decode a base64 embedding from model "
+                    f"{self._model!r} at {self._url} ({len(raw)} chars): {e}"
+                ) from e
             return self._ensure_dimension(list(vec))
         return self._ensure_dimension(raw)
 
