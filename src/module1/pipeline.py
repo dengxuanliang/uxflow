@@ -215,7 +215,7 @@ class TrajectoryPipeline:
 
         on_progress(phase, done, total) 可选回调，phase ∈ {"slicing","embedding","writing"}。
         embedding 阶段每完成一个 chunk 报一次 —— 批量化把 N 次小调用压成
-        ceil(N/64) 次大调用，总时间更短，但单步不可观测，必须显式报进度。
+        ceil(N/batch) 次大调用，总时间更短，但单步不可观测，必须显式报进度。
         """
         emb_model = self._config.embedding_model
         pending: list[tuple[object, object]] = []      # (signature, slice)
