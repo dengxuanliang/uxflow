@@ -60,14 +60,42 @@ def make_embedder(backend: str | None = None):
 
     if choice == "api":
         from uxflow_embed import ApiEmbedder
-        model = os.environ.get("UXFLOW_EMBED_API_MODEL", "text-embedding-3-small")
-        dimension = int(os.environ.get("UXFLOW_EMBED_API_DIM", "1024"))
-        base_url = os.environ.get("UXFLOW_EMBED_API_BASE", "https://api.openai.com/v1")
+
+        # LiteLLM first: this project already routes every LLM call through that
+        # proxy, and it serves embeddings too, so reusing its credentials means
+        # switching to the api backend needs no new .env entries at all.
+        api_key = os.environ.get("LITELLM_KEY") or os.environ.get("OPENAI_API_KEY")
+        base_url = (
+            os.environ.get("LITELLM_BASE")
+            or os.environ.get("UXFLOW_EMBED_API_BASE")
+            or "https://api.openai.com/v1"
+        )
+
+        model = os.environ.get("UXFLOW_EMBED_API_MODEL", "text-embedding-3-large")
+        dimension = int(os.environ.get("UXFLOW_EMBED_API_DIM", "3072"))
+
+        # Restricted-network knobs. Batch 32 keeps a 3072-dim base64 response
+        # near 0.5MB, about half the ~1MB ceiling on the target gateway; 64
+        # would be 1.03MB and over the line. Raise it only where the gateway
+        # is known to allow more.
+        timeout = float(os.environ.get("UXFLOW_EMBED_TIMEOUT", "25"))
+        max_tries = int(os.environ.get("UXFLOW_EMBED_MAX_TRIES", "5"))
+        batch_size = int(os.environ.get("UXFLOW_EMBED_BATCH", "32"))
+
         try:
-            return ApiEmbedder(model=model, dimension=dimension, base_url=base_url)
+            return ApiEmbedder(
+                model=model,
+                dimension=dimension,
+                api_key=api_key,
+                base_url=base_url,
+                timeout=timeout,
+                max_tries=max_tries,
+                preferred_batch_size=batch_size,
+            )
         except ValueError as e:
             raise SystemExit(
-                f"{_EMBED_ENV}=api needs OPENAI_API_KEY set (see .env.example).\n"
+                f"{_EMBED_ENV}=api needs LITELLM_KEY or OPENAI_API_KEY set "
+                f"(see .env.example).\n"
                 f"  underlying error: {e}"
             ) from e
 
