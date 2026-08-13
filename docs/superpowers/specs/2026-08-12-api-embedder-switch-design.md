@@ -231,6 +231,59 @@ httpx 超时时关闭旧 socket 再开新的，4 次重试是 4 条**先后**连
 
 现有阈值标定于真实 Qwen 向量（见 `scripts/calibrate_mount_threshold.py`），换模型后失效。本轮补充脚本量取 API 向量下的分布并记录数据，**阈值调优另开一轮**，不阻塞本次合入。
 
+#### API 向量下的实测分布（本轮采集，未据此改阈值）
+
+用 `scripts/calibrate_thresholds_api.py`（`make_embedder()` 装配的当前后端，覆盖 `calibrate_mount_threshold.py` 的同一批 `PAIRS`，并额外交叉出 unrelated pairs 作为噪声基线）分别跑 `fake` 与 `api` 两个后端。
+
+`fake` 后端（冒烟对照，预期无区分度）：
+
+```
+backend: FakeEmbedder  dimension=1024
+
+-- true child→parent pairs --
+cos=-0.021  child='修复运行时抛出的异常，如 TypeError/K' parent='从错误中恢复并修复问题'
+cos=0.004  child='修复导入模块失败的问题' parent='从错误中恢复并修复问题'
+cos=-0.033  child='为函数补充单元测试' parent='验证代码正确性'
+
+-- unrelated child→wrong-parent pairs (noise floor) --
+cos=0.022  child='修复运行时抛出的异常，如 TypeError/K' wrong_parent='验证代码正确性'
+cos=0.008  child='修复导入模块失败的问题' wrong_parent='验证代码正确性'
+cos=0.030  child='为函数补充单元测试' wrong_parent='从错误中恢复并修复问题'
+
+true:   min=-0.033 max=0.004 mean=-0.017
+noise:  min=0.008 max=0.030 mean=0.020
+
+separation gap (true_min - noise_max) = -0.063
+→ NO clean separation: at least one noise pair scores at or above the lowest true pair. There is no midpoint here that would mean anything as a threshold; more data (or a different measure) is needed before retuning.
+```
+
+哈希向量近正交，true/noise 无法区分——这是 fake 后端下的预期结果，不是 bug。
+
+`api` 后端（`text-embedding-3-large`，3072 维，走真实端点）：
+
+```
+backend: ApiEmbedder  dimension=3072
+
+-- true child→parent pairs --
+cos=0.531  child='修复运行时抛出的异常，如 TypeError/K' parent='从错误中恢复并修复问题'
+cos=0.537  child='修复导入模块失败的问题' parent='从错误中恢复并修复问题'
+cos=0.409  child='为函数补充单元测试' parent='验证代码正确性'
+
+-- unrelated child→wrong-parent pairs (noise floor) --
+cos=0.233  child='修复运行时抛出的异常，如 TypeError/K' wrong_parent='验证代码正确性'
+cos=0.206  child='修复导入模块失败的问题' wrong_parent='验证代码正确性'
+cos=0.251  child='为函数补充单元测试' wrong_parent='从错误中恢复并修复问题'
+
+true:   min=0.409 max=0.537 mean=0.492
+noise:  min=0.206 max=0.251 mean=0.230
+
+separation gap (true_min - noise_max) = 0.158
+→ clean separation: every true pair (0.409) scores above every noise pair (0.251).
+→ default mount_threshold=0.5 falls OUTSIDE the gap [0.251, 0.409] — does NOT reliably separate true pairs from noise under this backend.
+```
+
+**结论**：API 向量下 true/noise 有清晰分离（gap = [0.251, 0.409]），但当前默认 `mount_threshold=0.50` 落在这个区间**之外**（高于 `true_min=0.409`）——按当前默认值，本轮测得的最弱一条真实 child→parent 关系（`为函数补充单元测试` → `验证代码正确性`，cos=0.409）会被误判为不挂载。0.50 是否需要下调、下调到多少，留给阈值调优轮次决定；本节只记录数据，不改 `mount_threshold`。
+
 ## 5. 改动范围
 
 | 文件 | 改动 |
