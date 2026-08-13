@@ -86,6 +86,37 @@ class ApiEmbedder:
         if not texts:
             return []
 
+        # The API rejects empty input ("input[15]: input cannot be an empty
+        # string") with a 400, which is deliberately not retried — so one blank
+        # slice would abort a whole ingest. Real data does produce them: 19 of
+        # 1099 slices from the sample dataset embed to "". Drop them from the
+        # request and substitute zero vectors, which recall_core.vector_score
+        # already skips via `any(v != 0.0 ...)`. The local backend accepted
+        # empty strings, which is why this only surfaced on the API backend.
+        keep = [i for i, t in enumerate(texts) if t and t.strip()]
+        if not keep:
+            return [self._zero_vector() for _ in texts]
+
+        vectors = self._embed_nonempty([texts[i] for i in keep])
+
+        # Reassemble positionally: every input gets exactly one slot back, in
+        # the original order. Getting this wrong would silently write the wrong
+        # vector to the wrong slice, which is worse than crashing.
+        out = [self._zero_vector() for _ in texts]
+        for slot, vector in zip(keep, vectors):
+            out[slot] = vector
+        return out
+
+    def _zero_vector(self) -> list[float]:
+        """Sentinel for text that cannot be embedded.
+
+        Not normalized: a zero vector has norm 0, and dividing by it would make
+        every component NaN and poison downstream cosine comparisons.
+        """
+        return [0.0] * self._dimension
+
+    def _embed_nonempty(self, texts: list[str]) -> list[list[float]]:
+        """POST one batch, with retries. Every text here is known non-empty."""
         last_exc: Exception | None = None
         for attempt in range(1, self._max_tries + 1):
             try:

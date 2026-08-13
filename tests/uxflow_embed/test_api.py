@@ -299,6 +299,132 @@ def test_5xx_retry_stays_flat(monkeypatch):
     assert delays == [1.0, 1.0], f"5xx must use the flat delay, got {delays}"
 
 
+def test_all_empty_batch_skips_http_entirely():
+    """Every input empty -> zero vectors, and no request is ever sent.
+
+    The API rejects empty input with 400, and 400 is deliberately not retried,
+    so a single empty slice would otherwise kill a whole ingest.
+    """
+    calls = [0]
+
+    def handler(request):
+        calls[0] += 1
+        return httpx.Response(200, json={"data": []})
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    out = emb.embed_batch(["", "   ", "\n\t"])
+
+    assert len(out) == 3
+    assert all(vec == [0.0] * 8 for vec in out)
+    assert calls[0] == 0, "an all-empty batch must not hit the network at all"
+
+
+def test_mixed_empty_and_real_texts_preserve_order():
+    """Empty slots get zero vectors; real ones keep their own embedding.
+
+    Each input gets a distinguishable vector so a mis-ordering is detectable --
+    identical mock vectors would let a reordering bug pass silently.
+    """
+    sent = {}
+
+    def handler(request):
+        import json
+        payload = json.loads(request.content)
+        sent["input"] = payload["input"]
+        # Tag each returned vector with its input's first character, so the
+        # assertions below can prove which text produced which vector.
+        data = [
+            {"embedding": [float(ord(t[0]))] + [0.0] * 7, "index": i}
+            for i, t in enumerate(payload["input"])
+        ]
+        return httpx.Response(200, json={"data": data})
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    out = emb.embed_batch(["a", "", "b", "   ", "c"])
+
+    assert len(out) == 5, "one result per input, including the empty ones"
+    assert sent["input"] == ["a", "b", "c"], "blanks must not reach the API"
+
+    assert out[1] == [0.0] * 8
+    assert out[3] == [0.0] * 8
+
+    # Compare against a fresh single embed of the same text: same text => same
+    # vector, so this pins which input produced which slot.
+    for pos, text in ((0, "a"), (2, "b"), (4, "c")):
+        assert out[pos] == emb.embed(text), f"slot {pos} must hold {text!r}"
+
+
+def test_empty_string_at_end_of_batch():
+    """Trailing empty is the classic off-by-one position."""
+    def handler(request):
+        import json
+        inputs = json.loads(request.content)["input"]
+        data = [
+            {"embedding": [float(ord(t[0]))] + [0.0] * 7, "index": i}
+            for i, t in enumerate(inputs)
+        ]
+        return httpx.Response(200, json={"data": data})
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    out = emb.embed_batch(["x", "y", ""])
+
+    assert len(out) == 3
+    assert out[2] == [0.0] * 8, "the trailing blank must be the zeroed one"
+    assert out[0] == emb.embed("x")
+    assert out[1] == emb.embed("y")
+
+
+def test_empty_string_at_start_of_batch():
+    """Leading empty shifts every following index if the remap is wrong."""
+    def handler(request):
+        import json
+        inputs = json.loads(request.content)["input"]
+        data = [
+            {"embedding": [float(ord(t[0]))] + [0.0] * 7, "index": i}
+            for i, t in enumerate(inputs)
+        ]
+        return httpx.Response(200, json={"data": data})
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    out = emb.embed_batch(["", "p", "q"])
+
+    assert len(out) == 3
+    assert out[0] == [0.0] * 8
+    assert out[1] == emb.embed("p")
+    assert out[2] == emb.embed("q")
+
+
+def test_zero_vector_is_not_normalized_to_nan():
+    """_ensure_dimension divides by the norm; norm 0 would yield NaN and
+    poison every downstream cosine comparison."""
+    import math
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=_mock_transport(8),
+    )
+    out = emb.embed_batch([""])
+    assert not any(math.isnan(v) for v in out[0]), "zero vector must not be NaN"
+    assert out[0] == [0.0] * 8
+
+
 def test_base64_encoding_format():
     """When server returns base64, decode to float32 correctly."""
     import base64

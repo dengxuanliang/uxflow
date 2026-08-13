@@ -293,6 +293,24 @@ argmax-over-roots (ignoring any threshold): 6/11 children rank their true parent
 
 > **勘误**：本小节的早期草稿曾用 3 条手写 pair 测出 `separation gap = 0.158` 并称 "clean separation"，结论是 0.50 只需下移。该数字是**样本过易造成的假象**（手写 pair 的正负样本语义距离被人为拉大），已被上面基于 `taxonomy_v0.json` 全部 11 条真值的测量推翻。git 历史中仍可见那个 0.158，**不可采信**。
 
+### 4.9 空文本切片
+
+真实 ingest 中，`dataset/swe-chat-reasoning-sample-50.jsonl` 产出的 1099 条切片里有 **19 条 embedding 文本为空串**。`build_embedding_text()`（`src/module1/signature.py`）对 steps 中既无 `tool_call_args`、又无 assistant `content`、也无 `tool_result` 的切片，`" ".join([])` 得到 `""`。
+
+**这是既有问题，非本次迁移引入**：`git show origin/main:src/module1/signature.py` 中 `_build_summary_for_embedding` 完全相同。它一直没暴露，是因为本地 Qwen 模型会照单全收地嵌入空串（现有库 1132 条 signature 无一条 embedding 为 NULL）。API 后端则直接拒绝：
+
+```
+400 Bad Request: Invalid 'input[15]': input cannot be an empty string.
+```
+
+而 **400 是刻意不重试的**（见 §4.5：认证失败或请求格式错重试 5 次仍是同样的错），于是单条空切片就会终止整场 ingest。
+
+**处理**：在 `ApiEmbedder.embed_batch` 内解决，而非改调用方——持有 API 契约的是 embedder，不该让每个调用方都知道"这个后端不收空串"。请求前剔除空/纯空白文本，只把非空的发出去；若整批皆空则完全跳过 HTTP 调用。返回时按原始下标重组，**每条输入恰好对应一个输出**，空的那些填零向量。
+
+零向量是正确的哨兵值：`recall_core.vector_score`（`src/module1/recall_core.py:110`）本就以 `if sig.embedding and any(v != 0.0 for v in sig.embedding)` 过滤候选，零向量在下游已被当作"无可用 embedding"跳过。零向量也**不做归一化**——`_ensure_dimension` 要除以模长，模长为 0 会得到全 NaN 并污染所有余弦比较（该函数以 `if norm > 0` 守卫）。
+
+> **已知缺口，未修复**：更深的问题是 `build_embedding_text` 对某些切片压根产不出文本，这些切片无论有没有零向量兜底，**向量检索都召不回它们**。零向量只是让 ingest 不再崩，不等于这些切片被正确索引了。修 `build_embedding_text`（例如回退到 `tool_call_name`、user content 或切片元信息）会改变被嵌入的文本、进而改变每一条向量，是独立的一轮决策，本轮不做。
+
 ## 5. 改动范围
 
 | 文件 | 改动 |
