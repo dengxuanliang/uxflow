@@ -10,6 +10,7 @@ from the api_key arg or the OPENAI_API_KEY env var.
 from __future__ import annotations
 
 import os
+import time
 
 import httpx
 import numpy as np
@@ -27,7 +28,9 @@ class ApiEmbedder:
         dimension: int,
         api_key: str | None = None,
         base_url: str = "https://api.openai.com/v1",
-        timeout: float = 30.0,
+        timeout: float = 25.0,
+        max_tries: int = 5,
+        retry_delay: float = 1.0,
         transport: httpx.BaseTransport | None = None,
     ):
         key = api_key or os.environ.get("OPENAI_API_KEY")
@@ -35,12 +38,17 @@ class ApiEmbedder:
             raise ValueError(
                 "ApiEmbedder needs an api_key or the OPENAI_API_KEY env var."
             )
+        if max_tries < 1:
+            raise ValueError("ApiEmbedder needs max_tries >= 1.")
         self._model = model
         self._dimension = dimension
         self._url = base_url.rstrip("/") + "/embeddings"
+        self._timeout = timeout
+        self._max_tries = max_tries
+        self._retry_delay = retry_delay
         self._client = httpx.Client(
             headers={"Authorization": f"Bearer {key}"},
-            timeout=timeout,
+            timeout=self._timeout,
             transport=transport,
         )
 
@@ -63,10 +71,42 @@ class ApiEmbedder:
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
-        resp = self._client.post(self._url, json={"model": self._model, "input": texts})
-        resp.raise_for_status()
-        rows = sorted(resp.json()["data"], key=lambda d: d["index"])
-        return [self._ensure_dimension(r["embedding"]) for r in rows]
+
+        last_exc: Exception | None = None
+        for attempt in range(1, self._max_tries + 1):
+            try:
+                resp = self._client.post(
+                    self._url, json={"model": self._model, "input": texts}
+                )
+                resp.raise_for_status()
+                rows = sorted(resp.json()["data"], key=lambda d: d["index"])
+                return [self._ensure_dimension(r["embedding"]) for r in rows]
+            except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
+                if isinstance(e, httpx.HTTPStatusError):
+                    # 4xx means the request itself is wrong (bad key, malformed
+                    # body) — retrying just re-sends the identical broken
+                    # request. 429 is the exception: a transient rate limit,
+                    # retryable like 5xx.
+                    if (
+                        400 <= e.response.status_code < 500
+                        and e.response.status_code != 429
+                    ):
+                        raise
+                last_exc = e
+                if attempt < self._max_tries:
+                    # Flat delay, deliberately not exponential backoff. The
+                    # failure mode here is proxy-side queuing, not overload: a
+                    # request already stuck in a slow queue stays slow, while a
+                    # fresh one usually lands on an idle worker. Measured at
+                    # n=64, 8 trials each: a 12s timeout with immediate retry
+                    # got 8/8 in 8.51s mean, while a patient 90s single attempt
+                    # also got 8/8 but averaged 29.39s. Backing off would only
+                    # wait out a queue that never speeds up. See design spec §2.
+                    time.sleep(self._retry_delay)
+
+        # max_tries >= 1 is enforced in __init__, so the loop always runs at
+        # least once and always assigns last_exc before falling through here.
+        raise last_exc
 
     def _ensure_dimension(self, raw: list[float]) -> list[float]:
         vec = np.asarray(raw, dtype=np.float32)

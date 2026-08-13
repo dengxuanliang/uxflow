@@ -55,16 +55,105 @@ def test_missing_key_raises_value_error(monkeypatch):
         ApiEmbedder(model="m", dimension=8)
 
 
-def test_non_200_raises(monkeypatch):
+def test_max_tries_below_one_raises_value_error():
+    """max_tries < 1 would fall through the retry loop and `raise None`."""
+    with pytest.raises(ValueError, match="max_tries"):
+        ApiEmbedder(
+            api_key="test", model="m", dimension=8,
+            base_url="https://example.com/v1",
+            transport=_mock_transport(8),
+            max_tries=0,
+        )
+
+
+def test_non_200_raises_after_exhausting_retries():
+    """5xx is retryable, so it raises only after max_tries attempts."""
+    attempt = [0]
+
     def handler(request):
+        attempt[0] += 1
         return httpx.Response(500, json={"error": "boom"})
+
     emb = ApiEmbedder(
         api_key="test", model="m", dimension=8,
         base_url="https://example.com/v1",
         transport=httpx.MockTransport(handler),
+        max_tries=3,
+        retry_delay=0.01,
     )
     with pytest.raises(httpx.HTTPStatusError):
         emb.embed("hello")
+    assert attempt[0] == 3, "5xx must be retried up to max_tries"
+
+
+def test_4xx_does_not_retry():
+    """401/403/400 should raise immediately, not retry."""
+    attempt = [0]
+
+    def handler(request):
+        attempt[0] += 1
+        return httpx.Response(403, json={"error": "forbidden"})
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+        max_tries=5,
+        retry_delay=0.01,
+    )
+    with pytest.raises(httpx.HTTPStatusError, match="403"):
+        emb.embed("hello")
+
+    assert attempt[0] == 1
+
+
+def test_429_triggers_retry():
+    """429 rate-limit should retry like 5xx."""
+    attempt = [0]
+
+    def handler(request):
+        attempt[0] += 1
+        if attempt[0] < 3:
+            return httpx.Response(429, json={"error": "rate limit"})
+        return httpx.Response(200, json={
+            "data": [{"embedding": [1.0] * 8, "index": 0}]
+        })
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+        max_tries=5,
+        retry_delay=0.01,
+    )
+    result = emb.embed("hello")
+    assert len(result) == 8
+    assert attempt[0] == 3
+
+
+def test_timeout_triggers_retry():
+    """Timeout on attempt 1-4 should retry; success on attempt 5."""
+    attempt = [0]
+
+    def handler(request):
+        attempt[0] += 1
+        if attempt[0] < 5:
+            raise httpx.ReadTimeout("forced timeout")
+        return httpx.Response(200, json={
+            "data": [{"embedding": [1.0] * 8, "index": 0}]
+        })
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+        timeout=1.0,
+        max_tries=5,
+        retry_delay=0.01,
+    )
+    result = emb.embed("hello")
+    assert len(result) == 8
+    assert attempt[0] == 5
 
 
 def test_out_of_order_index_realigns_to_input(monkeypatch):
