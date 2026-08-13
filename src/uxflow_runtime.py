@@ -81,6 +81,8 @@ def make_embedder(backend: str | None = None):
         timeout = float(os.environ.get("UXFLOW_EMBED_TIMEOUT", "25"))
         max_tries = int(os.environ.get("UXFLOW_EMBED_MAX_TRIES", "5"))
         batch_size = int(os.environ.get("UXFLOW_EMBED_BATCH", "32"))
+        rate_limit_base = float(os.environ.get("UXFLOW_EMBED_RATELIMIT_BASE", "2.0"))
+        rate_limit_cap = float(os.environ.get("UXFLOW_EMBED_RATELIMIT_CAP", "32.0"))
 
         try:
             return ApiEmbedder(
@@ -90,6 +92,8 @@ def make_embedder(backend: str | None = None):
                 base_url=base_url,
                 timeout=timeout,
                 max_tries=max_tries,
+                rate_limit_base=rate_limit_base,
+                rate_limit_cap=rate_limit_cap,
                 preferred_batch_size=batch_size,
             )
         except ValueError as e:

@@ -34,6 +34,8 @@ class ApiEmbedder:
         timeout: float = 25.0,
         max_tries: int = 5,
         retry_delay: float = 1.0,
+        rate_limit_base: float = 2.0,
+        rate_limit_cap: float = 32.0,
         preferred_batch_size: int = 32,
         transport: httpx.BaseTransport | None = None,
     ):
@@ -50,6 +52,8 @@ class ApiEmbedder:
         self._timeout = timeout
         self._max_tries = max_tries
         self._retry_delay = retry_delay
+        self._rate_limit_base = rate_limit_base
+        self._rate_limit_cap = rate_limit_cap
         self._preferred_batch_size = preferred_batch_size
         self._client = httpx.Client(
             headers={"Authorization": f"Bearer {key}"},
@@ -98,31 +102,69 @@ class ApiEmbedder:
                 rows = sorted(resp.json()["data"], key=lambda d: d["index"])
                 return [self._decode_embedding(r["embedding"]) for r in rows]
             except (httpx.TimeoutException, httpx.HTTPStatusError) as e:
-                if isinstance(e, httpx.HTTPStatusError):
-                    # 4xx means the request itself is wrong (bad key, malformed
-                    # body) — retrying just re-sends the identical broken
-                    # request. 429 is the exception: a transient rate limit,
-                    # retryable like 5xx.
-                    if (
-                        400 <= e.response.status_code < 500
-                        and e.response.status_code != 429
-                    ):
-                        raise
+                status = (
+                    e.response.status_code
+                    if isinstance(e, httpx.HTTPStatusError)
+                    else None
+                )
+                # 4xx means the request itself is wrong (bad key, malformed
+                # body) — retrying just re-sends the identical broken request.
+                # 429 is the exception: a transient rate limit, retryable.
+                if status is not None and 400 <= status < 500 and status != 429:
+                    raise
                 last_exc = e
                 if attempt < self._max_tries:
-                    # Flat delay, deliberately not exponential backoff. The
-                    # failure mode here is proxy-side queuing, not overload: a
-                    # request already stuck in a slow queue stays slow, while a
-                    # fresh one usually lands on an idle worker. Measured at
-                    # n=64, 8 trials each: a 12s timeout with immediate retry
-                    # got 8/8 in 8.51s mean, while a patient 90s single attempt
-                    # also got 8/8 but averaged 29.39s. Backing off would only
-                    # wait out a queue that never speeds up. See design spec §2.
-                    time.sleep(self._retry_delay)
+                    time.sleep(self._retry_wait(e, status, attempt))
 
         # max_tries >= 1 is enforced in __init__, so the loop always runs at
         # least once and always assigns last_exc before falling through here.
         raise last_exc
+
+    def _retry_wait(
+        self, exc: Exception, status: int | None, attempt: int
+    ) -> float:
+        """How long to wait before retry `attempt`+1.
+
+        Timeouts/5xx and 429 are opposite failure modes and get opposite
+        strategies — merging them breaks one or the other.
+        """
+        if status == 429:
+            # A rate limit means the quota window is closed, so the only thing
+            # that helps is waiting for it to reopen. Observed against an Azure
+            # OpenAI S0 tier: a flat 1s retry knocked on the locked door 5 times
+            # in 5 seconds and exhausted every attempt, because those windows
+            # run ~60s. Hence exponential, capped so one batch can't hang
+            # forever. Prefer a server-stated Retry-After when offered — this
+            # endpoint sends none, but others do, and it beats guessing.
+            retry_after = self._retry_after_seconds(exc)
+            if retry_after is not None:
+                return retry_after
+            backoff = self._rate_limit_base * 2 ** (attempt - 1)
+            return min(backoff, self._rate_limit_cap)
+
+        # Flat delay, deliberately not exponential. This failure mode is
+        # proxy-side queuing, not overload: a request already stuck in a slow
+        # queue stays slow, while a fresh one usually lands on an idle worker.
+        # Measured at n=64, 8 trials each: a 12s timeout with immediate retry
+        # got 8/8 in 8.51s mean, while a patient 90s single attempt also got
+        # 8/8 but averaged 29.39s. Backing off would only wait out a queue that
+        # never speeds up. See design spec §2.
+        return self._retry_delay
+
+    @staticmethod
+    def _retry_after_seconds(exc: Exception) -> float | None:
+        """Parse a Retry-After header, if the response carried a usable one."""
+        if not isinstance(exc, httpx.HTTPStatusError):
+            return None
+        raw = exc.response.headers.get("retry-after")
+        if not raw:
+            return None
+        try:
+            # Retry-After may also be an HTTP-date, which float() rejects; fall
+            # back to our own backoff rather than guessing at a date format.
+            return float(raw.strip())
+        except ValueError:
+            return None
 
     def _decode_embedding(self, raw: str | list[float]) -> list[float]:
         """Decode base64 or list embedding, then truncate/pad + L2-normalize.

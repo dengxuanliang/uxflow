@@ -125,6 +125,9 @@ def test_429_triggers_retry():
         transport=httpx.MockTransport(handler),
         max_tries=5,
         retry_delay=0.01,
+        # 429 now backs off exponentially; keep the base tiny so this test
+        # stays fast. test_429_backoff_grows_exponentially asserts the growth.
+        rate_limit_base=0.01,
     )
     result = emb.embed("hello")
     assert len(result) == 8
@@ -154,6 +157,146 @@ def test_timeout_triggers_retry():
     result = emb.embed("hello")
     assert len(result) == 8
     assert attempt[0] == 5
+
+
+def _record_sleeps(monkeypatch):
+    """Capture retry delays without actually sleeping.
+
+    Patches the module's own `time.sleep`, so the assertions below measure the
+    delay the code *chose*, not wall-clock time. That keeps the suite fast and
+    lets us assert exact values instead of fuzzy timing.
+    """
+    import uxflow_embed.api as api_mod
+
+    delays: list[float] = []
+    monkeypatch.setattr(api_mod.time, "sleep", lambda d: delays.append(d))
+    return delays
+
+
+def test_429_backoff_grows_exponentially(monkeypatch):
+    """429 is a closed quota window, not queuing -- it must back off, not hammer.
+
+    A flat delay knocks on a locked door N times in N seconds; Azure tier
+    windows are ~60s, so exhaustion is guaranteed. Delays must double.
+    """
+    delays = _record_sleeps(monkeypatch)
+
+    def handler(request):
+        return httpx.Response(429, json={"error": "rate limit"})
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+        max_tries=4,
+        retry_delay=1.0,
+        rate_limit_base=2.0,
+        rate_limit_cap=32.0,
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        emb.embed("hello")
+
+    # 3 sleeps for 4 attempts (none after the last), doubling from the base.
+    assert delays == [2.0, 4.0, 8.0], (
+        f"429 must back off exponentially, got {delays}"
+    )
+
+
+def test_429_honours_retry_after_header(monkeypatch):
+    """A server-stated wait beats our guess. This endpoint sends none, but
+    others do, and obeying it when offered is strictly better."""
+    delays = _record_sleeps(monkeypatch)
+
+    def handler(request):
+        return httpx.Response(
+            429, json={"error": "rate limit"}, headers={"retry-after": "7"}
+        )
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+        max_tries=3,
+        rate_limit_base=2.0,
+        rate_limit_cap=32.0,
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        emb.embed("hello")
+
+    assert delays == [7.0, 7.0], f"Retry-After must win over backoff, got {delays}"
+
+
+def test_429_backoff_is_capped(monkeypatch):
+    """Doubling without a ceiling would let one batch hang for hours."""
+    delays = _record_sleeps(monkeypatch)
+
+    def handler(request):
+        return httpx.Response(429, json={"error": "rate limit"})
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+        max_tries=8,
+        rate_limit_base=2.0,
+        rate_limit_cap=8.0,
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        emb.embed("hello")
+
+    assert delays == [2.0, 4.0, 8.0, 8.0, 8.0, 8.0, 8.0], (
+        f"backoff must saturate at the cap, got {delays}"
+    )
+    assert max(delays) <= 8.0
+
+
+def test_timeout_retry_stays_flat(monkeypatch):
+    """The timeout path must NOT inherit the 429 backoff.
+
+    Queuing and quota are opposite failure modes: a queued request stays slow
+    so resending fast is right, while a closed window needs waiting out. This
+    asserts the two paths did not get merged.
+    """
+    delays = _record_sleeps(monkeypatch)
+
+    def handler(request):
+        raise httpx.ReadTimeout("forced timeout")
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+        max_tries=4,
+        retry_delay=1.0,
+        rate_limit_base=2.0,
+    )
+    with pytest.raises(httpx.ReadTimeout):
+        emb.embed("hello")
+
+    assert delays == [1.0, 1.0, 1.0], (
+        f"timeouts must use the flat delay, not backoff, got {delays}"
+    )
+
+
+def test_5xx_retry_stays_flat(monkeypatch):
+    """5xx is a server hiccup, not a quota window -- flat like timeouts."""
+    delays = _record_sleeps(monkeypatch)
+
+    def handler(request):
+        return httpx.Response(500, json={"error": "boom"})
+
+    emb = ApiEmbedder(
+        api_key="test", model="m", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+        max_tries=3,
+        retry_delay=1.0,
+        rate_limit_base=2.0,
+    )
+    with pytest.raises(httpx.HTTPStatusError):
+        emb.embed("hello")
+
+    assert delays == [1.0, 1.0], f"5xx must use the flat delay, got {delays}"
 
 
 def test_base64_encoding_format():
