@@ -166,7 +166,7 @@ def test_base64_encoding_format():
         body = json.loads(request.content)
         assert body.get("encoding_format") == "base64"
         vec = [0.5, 0.5, 0.5, 0.5, 0.0, 0.0, 0.0, 0.0]
-        raw = struct.pack(f"{len(vec)}f", *vec)
+        raw = struct.pack(f"<{len(vec)}f", *vec)
         b64 = base64.b64encode(raw).decode("ascii")
         return httpx.Response(200, json={"data": [{"embedding": b64, "index": 0}]})
 
@@ -178,6 +178,58 @@ def test_base64_encoding_format():
     result = emb.embed("hello")
     assert len(result) == 8
     assert abs(result[0] - 0.5) < 1e-6
+
+
+def test_corrupt_base64_raises_with_context():
+    """A malformed blob is not an httpx error, so it must not escape as a bare
+    binascii traceback with no mention of where it came from."""
+    def handler(request):
+        # "!!!!" is outside the base64 alphabet -> binascii.Error.
+        return httpx.Response(200, json={
+            "data": [{"embedding": "!!!!not-valid-base64!!!!", "index": 0}]
+        })
+
+    emb = ApiEmbedder(
+        api_key="test", model="text-embedding-3-large", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(ValueError) as excinfo:
+        emb.embed("hello")
+
+    msg = str(excinfo.value)
+    assert "text-embedding-3-large" in msg, "error must name the model"
+    assert "https://example.com/v1/embeddings" in msg, "error must name the endpoint"
+
+
+def test_base64_blob_not_multiple_of_four_bytes_raises_with_context():
+    """A blob that decodes cleanly but isn't a whole number of float32s."""
+    import base64
+
+    def handler(request):
+        # 6 raw bytes: valid base64, but 6 % 4 != 0, so struct.unpack of
+        # 1 float (4 bytes) against a 6-byte buffer raises struct.error.
+        blob = b"\x00\x01\x02\x03\x04\x05"
+        b64 = base64.b64encode(blob).decode("ascii")
+        return httpx.Response(200, json={"data": [{"embedding": b64, "index": 0}]})
+
+    emb = ApiEmbedder(
+        api_key="test", model="text-embedding-3-large", dimension=8,
+        base_url="https://example.com/v1",
+        transport=httpx.MockTransport(handler),
+    )
+    with pytest.raises(ValueError) as excinfo:
+        emb.embed("hello")
+
+    msg = str(excinfo.value)
+    assert "text-embedding-3-large" in msg, "error must name the model"
+    assert "https://example.com/v1/embeddings" in msg, "error must name the endpoint"
+
+
+def test_preferred_batch_size_defaults_to_32():
+    """32 keeps a 3072-dim base64 response near 0.5MB, half the ~1MB ceiling."""
+    emb = ApiEmbedder(api_key="test", model="m", dimension=8)
+    assert emb.preferred_batch_size == 32
 
 
 def test_preferred_batch_size_from_constructor():
