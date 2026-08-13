@@ -48,13 +48,21 @@ def test_api_embedder_against_live_endpoint(monkeypatch):
         norm = float(np.linalg.norm(np.asarray(vec)))
         assert abs(norm - 1.0) < 1e-3
 
-    # Single-embed path must agree with the batch path per-component — this is
-    # what would catch a base64-vs-list decoding divergence between the two.
+    # Single-embed path must agree with the batch path — this is what would
+    # catch a base64-vs-list decoding divergence between the two.
+    #
+    # Bound is 1e-3 per component, not 1e-5: the endpoint is not bit-exact
+    # between calls. Measured over 4 trials on the same text, batch-vs-single
+    # max component delta sat at ~1.58e-4 every time (cosine 0.9999984), so a
+    # 1e-5 bound fails on serving nondeterminism alone. A real decode
+    # divergence is not a rounding effect — it garbles scale or component
+    # order and lands O(0.01-1) out, far outside both bounds here.
     single = emb.embed(texts[0])
     batch_first = np.asarray(vectors[0])
     single_arr = np.asarray(single)
     assert single_arr.shape == batch_first.shape
-    assert np.max(np.abs(single_arr - batch_first)) < 1e-5
+    assert np.max(np.abs(single_arr - batch_first)) < 1e-3
+    assert _cos(single_arr, batch_first) > 0.9999
 
     # Two unrelated texts must not collapse to near-identical vectors — this
     # is what would catch an endpoint returning a constant vector.

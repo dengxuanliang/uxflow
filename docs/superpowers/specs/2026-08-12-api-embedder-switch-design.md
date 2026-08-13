@@ -233,56 +233,65 @@ httpx 超时时关闭旧 socket 再开新的，4 次重试是 4 条**先后**连
 
 #### API 向量下的实测分布（本轮采集，未据此改阈值）
 
-用 `scripts/calibrate_thresholds_api.py`（`make_embedder()` 装配的当前后端，覆盖 `calibrate_mount_threshold.py` 的同一批 `PAIRS`，并额外交叉出 unrelated pairs 作为噪声基线）分别跑 `fake` 与 `api` 两个后端。
+**方法**：`scripts/calibrate_thresholds_api.py`，后端由 `make_embedder()` 按 `UXFLOW_EMBED_BACKEND` 选择。真值取自 `fixtures/taxonomy_v0.json`（5 个 root、11 个 child，均为仓库内已确认的 child→parent 关系）。每个 label 以 `f"{label}: {description}"` 编码——root 的 description 极短，单独用它信息量不足。正样本 = 每个 child 对其声明的 parent（11 条）；负样本 = 每个 child 对其余 4 个非父 root（44 条）。全部 16 个 label 用**一次** `embed_batch` 取向量（端点约 30% 请求超时，16 次串行单调几乎必踩）。
 
-`fake` 后端（冒烟对照，预期无区分度）：
-
-```
-backend: FakeEmbedder  dimension=1024
-
--- true child→parent pairs --
-cos=-0.021  child='修复运行时抛出的异常，如 TypeError/K' parent='从错误中恢复并修复问题'
-cos=0.004  child='修复导入模块失败的问题' parent='从错误中恢复并修复问题'
-cos=-0.033  child='为函数补充单元测试' parent='验证代码正确性'
-
--- unrelated child→wrong-parent pairs (noise floor) --
-cos=0.022  child='修复运行时抛出的异常，如 TypeError/K' wrong_parent='验证代码正确性'
-cos=0.008  child='修复导入模块失败的问题' wrong_parent='验证代码正确性'
-cos=0.030  child='为函数补充单元测试' wrong_parent='从错误中恢复并修复问题'
-
-true:   min=-0.033 max=0.004 mean=-0.017
-noise:  min=0.008 max=0.030 mean=0.020
-
-separation gap (true_min - noise_max) = -0.063
-→ NO clean separation: at least one noise pair scores at or above the lowest true pair. There is no midpoint here that would mean anything as a threshold; more data (or a different measure) is needed before retuning.
-```
-
-哈希向量近正交，true/noise 无法区分——这是 fake 后端下的预期结果，不是 bug。
-
-`api` 后端（`text-embedding-3-large`，3072 维，走真实端点）：
+`api` 后端（`text-embedding-3-large`，3072 维，真实端点）实测：
 
 ```
-backend: ApiEmbedder  dimension=3072
+TRUE  n=11  min=0.288 p50=0.383 max=0.514
+FALSE n=44  min=0.186 p50=0.317 max=0.467
 
--- true child→parent pairs --
-cos=0.531  child='修复运行时抛出的异常，如 TypeError/K' parent='从错误中恢复并修复问题'
-cos=0.537  child='修复导入模块失败的问题' parent='从错误中恢复并修复问题'
-cos=0.409  child='为函数补充单元测试' parent='验证代码正确性'
-
--- unrelated child→wrong-parent pairs (noise floor) --
-cos=0.233  child='修复运行时抛出的异常，如 TypeError/K' wrong_parent='验证代码正确性'
-cos=0.206  child='修复导入模块失败的问题' wrong_parent='验证代码正确性'
-cos=0.251  child='为函数补充单元测试' wrong_parent='从错误中恢复并修复问题'
-
-true:   min=0.409 max=0.537 mean=0.492
-noise:  min=0.206 max=0.251 mean=0.230
-
-separation gap (true_min - noise_max) = 0.158
-→ clean separation: every true pair (0.409) scores above every noise pair (0.251).
-→ default mount_threshold=0.5 falls OUTSIDE the gap [0.251, 0.409] — does NOT reliably separate true pairs from noise under this backend.
+overlap: true_min=0.288 vs false_max=0.467 -> OVERLAPPING
 ```
 
-**结论**：API 向量下 true/noise 有清晰分离（gap = [0.251, 0.409]），但当前默认 `mount_threshold=0.50` 落在这个区间**之外**（高于 `true_min=0.409`）——按当前默认值，本轮测得的最弱一条真实 child→parent 关系（`为函数补充单元测试` → `验证代码正确性`，cos=0.409）会被误判为不挂载。0.50 是否需要下调、下调到多少，留给阈值调优轮次决定；本节只记录数据，不改 `mount_threshold`。
+**两个分布重叠**，不是"阈值偏了一点"，而是这个相似度本身无法线性分开两类。具体反例：
+
+| pair | cos | 判定 |
+|---|---|---|
+| `valid_syntax_in_toolcall → tool_use` | 0.467 | **错**（真父是 `code_generation`） |
+| `requirement_analysis_before_coding → code_generation` | 0.466 | **错**（真父是 `planning`） |
+| `self_verification → error_recovery` | 0.460 | **错**（真父是 `execution_control`） |
+| `file_localization_and_edit → code_generation` | 0.288 | **对**，却是全场最低分 |
+
+即：有 child 与错误 root 的相似度（0.467）显著高于另一些 child 与真父的相似度（0.288）。
+
+阈值扫描（balanced accuracy = TPR 与 TNR 的均值；负样本是正样本的 4 倍，用普通 accuracy 会让"全部拒绝"也拿到 80%，故不用）：
+
+```
+ thresh  miss_true  wrong_mount  balanced_acc
+  0.275          0           31         0.648
+  0.350          3           11         0.739  <- 最优
+  0.375          5            5         0.716
+  0.500          9            0         0.591  <- 当前默认
+```
+
+**另测 argmax 上限**：`evolution.py:61-68` 实际是先对全部 root 取 argmax、再用阈值判断"是否挂载"——即阈值只决定挂不挂，挑哪个父由排序决定。所以上表 `wrong_mount` 高估了真实错挂率（负样本过线还须同时压过真父才会被真的挂错），而与决策真正相关的是排序准确率：
+
+```
+argmax-over-roots (ignoring any threshold): 6/11 children rank their true parent #1
+  wrong: correct_shell_embedding: picked execution_control, true code_generation
+  wrong: file_localization_and_edit: picked tool_use, true code_generation
+  wrong: requirement_analysis_before_coding: picked code_generation, true planning
+  wrong: reproduce_before_fix: picked error_recovery, true execution_control
+  wrong: self_verification: picked error_recovery, true execution_control
+```
+
+**关键结论**：
+
+1. 当前默认 `mount_threshold=0.50` 会漏掉 **9/11** 条真实 child→parent 关系（只有 `valid_syntax_in_toolcall`、`effective_error_fix`、`wellformed_tool_call` 三条接近或过线）。它并非"略高"，而是几乎让挂载失效。
+2. balanced accuracy 最优点在 **0.35（0.739）**，但仍漏 **3/11** 真样本、错挂 **11/44** 负样本。它是重叠区里的最小损失折中，**不是解**。
+3. **排序本身也不够**：即使完全去掉阈值、只取 argmax，也只有 **6/11** 命中真父。所以"改用相对排序替代绝对阈值"**不足以修好这个问题**——它把上限从"漏 9/11"提到"错 5/11"，仍有近半错误。这条要点比早前设想的更严重：瓶颈在向量本身对这批标签的区分力，不只在判据形式。
+4. 因此这是**设计信号，不是调参问题**。可能的方向（均超出"更换 embedding 后端"这一轮范围，且第一条已知不足以单独奏效）：
+   - 给 root 更**丰富的 embedding 文本**（现有 root description 只有"代码生成相关能力"这类 6~8 字，信息量过低；`file_localization_and_edit` 被判给 `tool_use`、`self_verification` 被判给 `error_recovery` 都是这种信息不足的典型表现）；
+   - 用 **LLM 裁决**做最终判定，embedding 仅作 prefilter（给定 6/11 的排序上限，这条看起来是必需项而非可选项）；
+   - 相对排序（argmax / top-k）可作为组合项之一，但由上第 3 点，**不能单独依赖**。
+5. 本轮**不改** `mount_threshold`，`src/module0_5/evolution.py` 未改动。本节只记录证据，调优/改判据另开一轮。
+
+数值有轻微跑动（同一批文本重跑，个别 cosine 在 ±0.002 内浮动，如 `requirement_completeness→planning` 0.383/0.387、`0.375` 行 `wrong_mount` 4/5 互换），不影响上述任何结论的方向。
+
+`fake` 后端为冒烟对照：哈希向量近正交，TRUE `min=-0.084 p50=-0.009 max=0.044`、FALSE `min=-0.052 p50=0.002 max=0.082`，全部 cosine 贴近 0，任何阈值下 balanced_acc 恒为 0.500。这是 fake 的**预期结果，不是 bug**——它只验证脚本能跑通。
+
+> **勘误**：本小节的早期草稿曾用 3 条手写 pair 测出 `separation gap = 0.158` 并称 "clean separation"，结论是 0.50 只需下移。该数字是**样本过易造成的假象**（手写 pair 的正负样本语义距离被人为拉大），已被上面基于 `taxonomy_v0.json` 全部 11 条真值的测量推翻。git 历史中仍可见那个 0.158，**不可采信**。
 
 ## 5. 改动范围
 
